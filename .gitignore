@@ -1,0 +1,23 @@
+# Vivado project and generated files (recreate the project from rtl/ and tb/)
+vivado/
+*.xpr
+*.runs/
+*.cache/
+*.sim/
+*.gen/
+*.hw/
+*.ip_user_files/
+.Xil/
+*.jou
+*.log
+*.str
+*.wdb
+*.pb
+
+# Simulation output
+build/
+*.vcd
+*.fst
+
+# Windows download markers
+*:Zone.Identifier
