@@ -8,6 +8,10 @@
 // asynchronously, so self-modifying code is visible to instruction fetch.
 // A store to TOHOST (0x8000_0000) ends the run: 1 = pass, (n << 1) | 1 = fail in test n.
 // See README.md ("Core interface") for the port contract.
+//
+// +TRACE=<file> writes every store (S lines) for sw/trace_diff.py. Built with
+// -DRETIRE_TRACE, the core's optional retire_* ports are connected too and every
+// retired instruction is written (R lines); see README.md ("Golden model and trace comparison").
 module tb_core;
 
     localparam MEM_WORDS = 16384;  // 64 KiB
@@ -26,6 +30,13 @@ module tb_core;
     wire [31:0] dmem_wdata;
     wire [3:0]  dmem_wstrb;
     wire [31:0] dmem_rdata;
+`ifdef RETIRE_TRACE
+    wire        retire_valid;
+    wire [31:0] retire_pc;
+    wire [31:0] retire_insn;
+    wire [4:0]  retire_rd;
+    wire [31:0] retire_rd_wdata;
+`endif
 
     rv32i_core dut (
         .clk        (clk),
@@ -35,6 +46,13 @@ module tb_core;
         .dmem_addr  (dmem_addr),
         .dmem_wdata (dmem_wdata),
         .dmem_wstrb (dmem_wstrb),
+`ifdef RETIRE_TRACE
+        .retire_valid    (retire_valid),
+        .retire_pc       (retire_pc),
+        .retire_insn     (retire_insn),
+        .retire_rd       (retire_rd),
+        .retire_rd_wdata (retire_rd_wdata),
+`endif
         .dmem_rdata (dmem_rdata)
     );
 
@@ -46,6 +64,8 @@ module tb_core;
 
     string  name;
     string  hex;
+    string  trace_path;
+    integer trace_fd = 0;
     integer max_cycles;
     integer cycles;
     integer i;
@@ -58,6 +78,7 @@ module tb_core;
                 $display("FAIL    %0s: test case %0d (%0d cycles)", name, detail, cycles);
             else
                 $display("%0s %0s: pc 0x%08h (%0d cycles)", result, name, imem_addr, cycles);
+            if (trace_fd) $fclose(trace_fd);
             $finish;
         end
     endtask
@@ -71,6 +92,7 @@ module tb_core;
         end
         for (i = 0; i < MEM_WORDS; i = i + 1) mem[i] = 32'h0000_0000;
         $readmemh(hex, mem);
+        if ($value$plusargs("TRACE=%s", trace_path)) trace_fd = $fopen(trace_path, "w");
         if ($test$plusargs("VCD")) begin
             $dumpfile({"build/", name, ".vcd"});
             $dumpvars(0, tb_core);
@@ -85,7 +107,14 @@ module tb_core;
             cycles <= cycles + 1;
             if (cycles >= max_cycles)
                 finish_with("TIMEOUT", 0);
+`ifdef RETIRE_TRACE
+            if (trace_fd && retire_valid)
+                $fdisplay(trace_fd, "R pc=%08h insn=%08h rd=%02d val=%08h", retire_pc, retire_insn,
+                          retire_rd, retire_rd == 5'd0 ? 32'd0 : retire_rd_wdata);
+`endif
             if (|dmem_wstrb) begin
+                if (trace_fd)
+                    $fdisplay(trace_fd, "S addr=%08h data=%08h strb=%01h", dmem_addr, dmem_wdata, dmem_wstrb);
                 if (dmem_addr == TOHOST) begin
                     if (dmem_wdata == 32'd1)
                         finish_with("PASS", 0);

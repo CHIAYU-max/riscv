@@ -102,6 +102,35 @@ make test-one T=add VCD=1  # one test, waveform in build/add.vcd; disassembly in
 A failing test prints the riscv-tests case number (`FAIL add: test case 7`); look for `test_7` in `build/tests/add.dump`.
 Tools in WSL: `sudo apt install iverilog gcc-riscv64-unknown-elf`. CI runs the same steps on every push.
 
+## Golden model and trace comparison
+
+`sw/iss.py` is an RV32I instruction-set simulator with the same memory map as the testbench.
+`make trace` runs a program on the core and on the simulator and reports the first place they differ:
+
+```bash
+make iss-test              # every test and C program on the simulator alone (all should pass)
+make trace T=add           # compare stores; works with any core
+make trace P=fib RETIRE=1  # also compare every retired instruction (needs the ports below)
+```
+
+A mismatch prints the instructions before it, the expected and actual result, and a hint
+(wrong PC: branch, flush or stall; wrong value: ALU, immediate or forwarding).
+Traces are in `build/trace/<name>.ref` (simulator) and `<name>.core` (core).
+
+For `RETIRE=1` the core adds these output ports, driven once per instruction as it completes
+(in program order; in a pipeline, from the WB stage). The testbench connects them only when built
+with `-DRETIRE_TRACE`, so a core with them still works with `make test`.
+
+| Port | Width | Meaning |
+| --- | --- | --- |
+| `retire_valid` | 1 | an instruction completes this cycle (not a bubble or a flushed instruction) |
+| `retire_pc` | 32 | its PC |
+| `retire_insn` | 32 | its instruction word |
+| `retire_rd` | 5 | the register it writes, or 0 if none (stores, branches, `FENCE`) |
+| `retire_rd_wdata` | 32 | the value written to `retire_rd` |
+
+The run ends at the TOHOST store, so a pipelined core's trace may be up to 4 instructions short; that still counts as a match.
+
 The top_processor demo:
 
 ```bash

@@ -3,6 +3,9 @@
 # make selftest  check the testbench with a stand-in core (needs only iverilog)
 # make c-test    build the C programs in sw/c/programs and run them on rv32i_core
 # make c-one P=fib [VCD=1]      run one C program
+# make trace T=add | P=fib [RETIRE=1]   run the core and the golden model (sw/iss.py) and compare
+#                stores; RETIRE=1 also compares every retired instruction (needs the retire_* ports)
+# make iss-test  run all tests and C programs on the golden model alone (checks sw/iss.py)
 # make bit P=demo [MHZ=25]      Vivado bitstream for Basys3 with program P in memory
 #                (source Vivado's settings64.sh first; output in build/fpga/)
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
@@ -63,11 +66,29 @@ bit: build/c/$(P).hex
 test-one: build/sim_core build/tests/$(T).hex
 	vvp -n build/sim_core +HEX=build/tests/$(T).hex +NAME=$(T) $(if $(VCD),+VCD)
 
+TRACE_NAME = $(or $(T),$(P))
+TRACE_HEX  = $(if $(T),build/tests/$(T).hex,build/c/$(P).hex)
+TRACE_SIM  = $(if $(RETIRE),build/sim_core_retire,build/sim_core)
+
+# The simulator and the golden model may both report FAIL; the comparison decides
+trace: $(TRACE_SIM) $(TRACE_HEX)
+	mkdir -p build/trace
+	-vvp -n $(TRACE_SIM) +HEX=$(TRACE_HEX) +NAME=$(TRACE_NAME) +TRACE=build/trace/$(TRACE_NAME).core $(if $(VCD),+VCD)
+	-python3 sw/iss.py $(TRACE_HEX) --trace build/trace/$(TRACE_NAME).ref
+	python3 sw/trace_diff.py build/trace/$(TRACE_NAME).ref build/trace/$(TRACE_NAME).core --dump $(TRACE_HEX:.hex=.dump)
+
+iss-test: $(TEST_HEX) $(C_HEX)
+	@fail=0; for hex in $^; do python3 sw/iss.py $$hex || fail=1; done; exit $$fail
+
 tests: $(TEST_HEX)
 
 build/sim_core: tb/tb_core.v $(CORE_RTL)
 	mkdir -p build
 	iverilog -g2012 -Wall -s tb_core -o $@ tb/tb_core.v $(CORE_RTL)
+
+build/sim_core_retire: tb/tb_core.v $(CORE_RTL)
+	mkdir -p build
+	iverilog -g2012 -Wall -DRETIRE_TRACE -s tb_core -o $@ tb/tb_core.v $(CORE_RTL)
 
 build/tests/%.elf: $(ISA_DIR)/rv32ui/%.S sw/env/riscv_test.h sw/env/link.ld
 	mkdir -p build/tests
@@ -95,5 +116,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: test test-one tests c-test c-one bit selftest xsim sim clean
+.PHONY: test test-one tests c-test c-one trace iss-test bit selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf
