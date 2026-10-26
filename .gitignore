@@ -21,3 +21,5 @@ build/
 
 # Windows download markers
 *:Zone.Identifier
+clockInfo.txt
+usage_statistics_webtalk.*

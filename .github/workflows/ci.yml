@@ -15,7 +15,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y iverilog gcc-riscv64-unknown-elf
       - name: Testbench self-test
         run: make selftest
-      - name: riscv-tests (rv32ui)
+      - name: riscv-tests (rv32ui) and C programs
         # Runs once the core exists (rtl/rv32i_core.v)
         run: |
-          if [ -f rtl/rv32i_core.v ]; then make test; else echo "rtl/rv32i_core.v not found, skipping"; fi
+          if [ -f rtl/rv32i_core.v ]; then make test && make c-test; else echo "rtl/rv32i_core.v not found, skipping"; fi

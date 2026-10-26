@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Stand-in for rv32i_core used by `make selftest` to check tb_core.v itself
 // (program loading, store byte lanes, TOHOST detection) before the real core exists.
 // It is not a processor: it writes a test pattern to RAM, reads it back,
