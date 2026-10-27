@@ -24,7 +24,7 @@ The verification setup is ready: the riscv-tests rv32ui suite builds and runs ag
 - [x] C runtime and test programs; Basys3 top level, memory-mapped I/O and build script (checked with a stand-in core)
 - [ ] GCC-compiled C programs running on the core
 - [ ] Run on Basys3
-- [ ] Optional: custom INT8 dot-product instruction
+- [ ] Custom INT8 dot-product instruction (dot4): RTL to do; golden model, tests and benchmark ready
 
 ## Layout
 
@@ -139,3 +139,30 @@ make sim    # Icarus Verilog
 ```
 
 In Vivado, add `rtl/` as design sources and `tb/` as simulation sources. Keep the Vivado project in `vivado/`, which Git ignores.
+
+## dot4 custom instruction
+
+`dot4 rd, rs1, rs2` multiplies the four byte lanes of `rs1` and `rs2` and writes the sum to `rd`.
+Encoding: custom-0 opcode `0001011`, R-type, funct3 = 0, funct7 = 0. Both operands are signed by default
+(`DOT4_RS1_SIGNED` / `DOT4_RS2_SIGNED` in `sw/iss.py` and `sw/c/dot4.h`); `make ... DOT4_ACT=unsigned`
+builds the programs for unsigned activations (u8 x s8), and `DOT4_RS1_SIGNED` in `sw/iss.py` must match.
+Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
+
+| Target | What it runs |
+| --- | --- |
+| `make dot4-iss` | `dot4_test`, `conv_ref`, `conv_dot4` on the golden model with `--dot4` |
+| `make dot4-test` | `dot4_test` and `conv_dot4` on `rv32i_core` (needs dot4 in the RTL) |
+| `make bench` | cycles on the core and instructions on the golden model for each version |
+
+- `sw/c/dot4.h`: `dot4()` through GCC's `.insn r 0x0B, 0, 0, ...` (no compiler change) and the plain C `dot4_ref()`.
+- `sw/c/bench/dot4_test.c`: 64 edge-value pairs and 64 pseudo-random pairs against `dot4_ref()`.
+- `sw/c/bench/conv.c`: one INT8 3x3 convolution tile in HWC layout (32 input channels, 2x2 outputs, 4 output
+  channels, 4,608 MACs; data and checksum from `sw/c/gen_conv.py`), built three ways: plain RV32I (`conv_ref`,
+  products through `__mulsi3`), RV32IM (`conv_mul`, golden model only, as a fair baseline with a hardware
+  multiplier) and dot4 (`conv_dot4`, 32-bit loads, four MACs per instruction).
+
+Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
+so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
+come from `make bench` once dot4 is in the RTL.
+
+The dot4 golden model, tests and benchmark were written by Claude; the instruction's RTL is to be written by hand.

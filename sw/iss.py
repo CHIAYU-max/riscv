@@ -19,10 +19,22 @@ MEM_BYTES = 64 * 1024
 TOHOST = 0x8000_0000
 MASK = 0xFFFF_FFFF
 
+# dot4 custom instruction (only with --dot4): custom-0 opcode 0001011, R-type, funct3 = 0, funct7 = 0,
+# rd = sum over the four byte lanes of rs1[i] * rs2[i]. Signedness of each operand is a design choice;
+# set these to match the RTL (and pass the same choice to sw/c/gen_conv.py and sw/c/dot4.h).
+DOT4_OPCODE = 0x0B
+DOT4_RS1_SIGNED = True
+DOT4_RS2_SIGNED = True
+
 
 def sext(value, bits):
     sign = 1 << (bits - 1)
     return (value & (sign - 1)) - (value & sign)
+
+
+def byte_lane(word, i, signed):
+    value = word >> (8 * i) & 0xFF
+    return sext(value, 8) if signed else value
 
 
 class Halt(Exception):
@@ -32,7 +44,8 @@ class Halt(Exception):
 
 
 class RV32I:
-    def __init__(self, hex_path):
+    def __init__(self, hex_path, dot4=False, mul=False):
+        self.dot4, self.mul = dot4, mul
         self.mem = bytearray(MEM_BYTES)
         with open(hex_path) as f:
             words = [int(line, 16) for line in f if line.strip()]
@@ -144,6 +157,8 @@ class RV32I:
                 value = sext(rs1, 32) >> shamt
             else:
                 raise Halt("ILLEGAL")
+        elif op == 0x33 and f7 == 1 and f3 == 0 and self.mul:   # MUL (M extension, only with --mul)
+            value = rs1 * rs2
         elif op == 0x33:                                # OP
             shamt = rs2 & 31
             value = {
@@ -162,6 +177,8 @@ class RV32I:
                 raise Halt("ILLEGAL")
         elif op == 0x0F:                                # FENCE: no-op
             pass
+        elif op == DOT4_OPCODE and self.dot4 and f3 == 0 and f7 == 0:   # dot4 (custom-0)
+            value = sum(byte_lane(rs1, i, DOT4_RS1_SIGNED) * byte_lane(rs2, i, DOT4_RS2_SIGNED) for i in range(4))
         else:                                           # SYSTEM (ecall, CSRs) and anything else
             raise Halt("ILLEGAL")
 
@@ -183,10 +200,12 @@ def main():
     parser.add_argument("--name", default=None)
     parser.add_argument("--trace", help="write the reference trace to this file")
     parser.add_argument("--max-steps", type=int, default=1_000_000)
+    parser.add_argument("--dot4", action="store_true", help="also decode the dot4 custom instruction")
+    parser.add_argument("--mul", action="store_true", help="also decode MUL (benchmark baseline only)")
     args = parser.parse_args()
     name = args.name or args.hex.rsplit("/", 1)[-1].removesuffix(".hex")
 
-    cpu = RV32I(args.hex)
+    cpu = RV32I(args.hex, dot4=args.dot4, mul=args.mul)
     steps = 0
     try:
         while steps < args.max_steps:

@@ -6,6 +6,9 @@
 # make trace T=add | P=fib [RETIRE=1]   run the core and the golden model (sw/iss.py) and compare
 #                stores; RETIRE=1 also compares every retired instruction (needs the retire_* ports)
 # make iss-test  run all tests and C programs on the golden model alone (checks sw/iss.py)
+# make dot4-iss  run the dot4 test and both convolution benchmarks on the golden model (--dot4)
+# make dot4-test run the dot4 test and conv_dot4 on rv32i_core (needs dot4 in the RTL)
+# make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
 # make bit P=demo [MHZ=25]      Vivado bitstream for Basys3 with program P in memory
 #                (source Vivado's settings64.sh first; output in build/fpga/)
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
@@ -82,6 +85,44 @@ iss-test: $(TEST_HEX) $(C_HEX)
 
 tests: $(TEST_HEX)
 
+# dot4 custom instruction (README "dot4 custom instruction"). Kept out of c-test: a core
+# without dot4 must still pass everything else. DOT4_ACT=unsigned for u8 x s8 (also set
+# DOT4_RS1_SIGNED = False in sw/iss.py).
+DOT4_HEX    := build/c/dot4_test.hex build/c/conv_ref.hex build/c/conv_dot4.hex
+BENCH_STEPS ?= 3000000
+DOT4_ACT    ?= signed
+
+build/c/conv_data.h: sw/c/gen_conv.py
+	mkdir -p build/c
+	python3 $< --out $@ $(if $(filter unsigned,$(DOT4_ACT)),--unsigned-act)
+
+build/c/dot4_test.elf: sw/c/bench/dot4_test.c sw/c/dot4.h sw/c/crt0.S sw/c/link.ld
+	mkdir -p build/c
+	$(CC) $(C_CFLAGS) $(if $(filter unsigned,$(DOT4_ACT)),-DDOT4_RS1_SIGNED=0) sw/c/crt0.S $< -lgcc -o $@
+
+build/c/conv_ref.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/crt0.S sw/c/link.ld
+	$(CC) $(C_CFLAGS) -Ibuild/c sw/c/crt0.S $< -lgcc -o $@
+
+# Baseline with a hardware multiplier (RV32IM, mul only): golden model only, rv32i_core has no M extension
+build/c/conv_mul.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/crt0.S sw/c/link.ld
+	$(CC) $(subst -march=rv32i ,-march=rv32im ,$(C_CFLAGS)) -Ibuild/c sw/c/crt0.S $< -lgcc -o $@
+
+build/c/conv_dot4.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/dot4.h sw/c/crt0.S sw/c/link.ld
+	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_DOT4 sw/c/crt0.S $< -lgcc -o $@
+
+dot4-iss: $(DOT4_HEX)
+	@fail=0; for hex in $^; do python3 sw/iss.py --dot4 --max-steps $(BENCH_STEPS) $$hex || fail=1; done; exit $$fail
+
+dot4-test: build/sim_core build/c/dot4_test.hex build/c/conv_dot4.hex
+	sw/run_tests.sh build/sim_core build/c/dot4_test.hex build/c/conv_dot4.hex
+
+bench: build/sim_core build/c/conv_ref.hex build/c/conv_mul.hex build/c/conv_dot4.hex
+	@python3 sw/iss.py --mul --max-steps $(BENCH_STEPS) build/c/conv_mul.hex
+	@for p in conv_ref conv_dot4; do \
+	    vvp -n build/sim_core +HEX=build/c/$$p.hex +NAME=$$p +MAX_CYCLES=$(BENCH_STEPS) | grep -E '^(PASS|FAIL|TIMEOUT|BADADDR|ERROR)'; \
+	    python3 sw/iss.py --dot4 --max-steps $(BENCH_STEPS) build/c/$$p.hex; \
+	done
+
 build/sim_core: tb/tb_core.v $(CORE_RTL)
 	mkdir -p build
 	iverilog -g2012 -Wall -s tb_core -o $@ tb/tb_core.v $(CORE_RTL)
@@ -116,5 +157,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: test test-one tests c-test c-one trace iss-test bit selftest xsim sim clean
+.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test bench bit selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf
