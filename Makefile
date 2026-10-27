@@ -11,6 +11,8 @@
 # make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
 # make bit P=demo [MHZ=25]      Vivado bitstream for Basys3 with program P in memory
 #                (source Vivado's settings64.sh first; output in build/fpga/)
+# make fmax P=demo [FMAX_MHZ=50] [CORE=...]   place and route on Basys3, report Fmax and the core's
+#                LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/)
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
 # make sim       top_processor demo, Icarus Verilog
 # Tools (WSL): sudo apt install iverilog gcc-riscv64-unknown-elf
@@ -65,6 +67,13 @@ build/c/%.hex: build/c/%.elf
 bit: build/c/$(P).hex
 	$(VIVADO) -mode batch -nojournal -log build/fpga_build.log -source fpga/build.tcl \
 	    -tclargs build/c/$(P).hex $(MHZ) $(CORE_RTL)
+
+# CORE overrides the core sources, e.g. CORE=tb/selftest_core.v to check the script without rv32i_core.v
+CORE ?= $(CORE_RTL)
+FMAX_MHZ ?= 50
+fmax: build/c/$(P).hex
+	$(VIVADO) -mode batch -nojournal -log build/fmax.log -source fpga/fmax.tcl \
+	    -tclargs build/c/$(P).hex $(FMAX_MHZ) $(CORE) | grep FMAX_DONE
 
 test-one: build/sim_core build/tests/$(T).hex
 	vvp -n build/sim_core +HEX=build/tests/$(T).hex +NAME=$(T) $(if $(VCD),+VCD)
@@ -157,5 +166,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test bench bit selftest xsim sim clean
+.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test bench bit fmax selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf
