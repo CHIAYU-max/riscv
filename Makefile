@@ -95,11 +95,11 @@ iss-test: $(TEST_HEX) $(C_HEX)
 tests: $(TEST_HEX)
 
 # dot4 custom instruction (README "dot4 custom instruction"). Kept out of c-test: a core
-# without dot4 must still pass everything else. DOT4_ACT=unsigned for u8 x s8 (also set
-# DOT4_RS1_SIGNED = False in sw/iss.py).
+# without dot4 must still pass everything else. dot4 is u8 x s8; DOT4_ACT=signed builds the
+# programs for s8 x s8 instead (also set DOT4_RS1_SIGNED = True in sw/iss.py).
 DOT4_HEX    := build/c/dot4_test.hex build/c/conv_ref.hex build/c/conv_dot4.hex
 BENCH_STEPS ?= 3000000
-DOT4_ACT    ?= signed
+DOT4_ACT    ?= unsigned
 
 build/c/conv_data.h: sw/c/gen_conv.py
 	mkdir -p build/c
@@ -107,7 +107,7 @@ build/c/conv_data.h: sw/c/gen_conv.py
 
 build/c/dot4_test.elf: sw/c/bench/dot4_test.c sw/c/dot4.h sw/c/crt0.S sw/c/link.ld
 	mkdir -p build/c
-	$(CC) $(C_CFLAGS) $(if $(filter unsigned,$(DOT4_ACT)),-DDOT4_RS1_SIGNED=0) sw/c/crt0.S $< -lgcc -o $@
+	$(CC) $(C_CFLAGS) $(if $(filter signed,$(DOT4_ACT)),-DDOT4_RS1_SIGNED=1) sw/c/crt0.S $< -lgcc -o $@
 
 build/c/conv_ref.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/crt0.S sw/c/link.ld
 	$(CC) $(C_CFLAGS) -Ibuild/c sw/c/crt0.S $< -lgcc -o $@

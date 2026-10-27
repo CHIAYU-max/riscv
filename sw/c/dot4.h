@@ -1,11 +1,11 @@
 // dot4 custom instruction (custom-0 opcode 0001011, R-type, funct3 = 0, funct7 = 0):
 // rd = rs1[7:0]*rs2[7:0] + rs1[15:8]*rs2[15:8] + rs1[23:16]*rs2[23:16] + rs1[31:24]*rs2[31:24]
-// Each operand's signedness follows DOT4_RS1_SIGNED / DOT4_RS2_SIGNED in sw/iss.py; keep them in sync.
+// rs1 lanes are unsigned (u8 activations), rs2 lanes signed (s8 weights); keep in sync with sw/iss.py.
 #ifndef DOT4_H
 #define DOT4_H
 
 #ifndef DOT4_RS1_SIGNED
-#define DOT4_RS1_SIGNED 1
+#define DOT4_RS1_SIGNED 0
 #endif
 #ifndef DOT4_RS2_SIGNED
 #define DOT4_RS2_SIGNED 1

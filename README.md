@@ -143,9 +143,11 @@ In Vivado, add `rtl/` as design sources and `tb/` as simulation sources. Keep th
 ## dot4 custom instruction
 
 `dot4 rd, rs1, rs2` multiplies the four byte lanes of `rs1` and `rs2` and writes the sum to `rd`.
-Encoding: custom-0 opcode `0001011`, R-type, funct3 = 0, funct7 = 0. Both operands are signed by default
-(`DOT4_RS1_SIGNED` / `DOT4_RS2_SIGNED` in `sw/iss.py` and `sw/c/dot4.h`); `make ... DOT4_ACT=unsigned`
-builds the programs for unsigned activations (u8 x s8), and `DOT4_RS1_SIGNED` in `sw/iss.py` must match.
+Encoding: custom-0 opcode `0001011`, R-type, funct3 = 0, funct7 = 0. `rs1` lanes are unsigned (u8 activations)
+and `rs2` lanes signed (s8 weights): in the OpenVINO INT8 version of the U-Net, the activations entering every
+convolution except the first are unsigned and the weights are symmetric INT8, the same split as Intel VNNI
+`vpdpbusd`. `make ... DOT4_ACT=signed` builds the programs for s8 x s8 instead (also flip `DOT4_RS1_SIGNED`
+in `sw/iss.py`).
 Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
 
 | Target | What it runs |

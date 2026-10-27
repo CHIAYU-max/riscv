@@ -20,10 +20,11 @@ TOHOST = 0x8000_0000
 MASK = 0xFFFF_FFFF
 
 # dot4 custom instruction (only with --dot4): custom-0 opcode 0001011, R-type, funct3 = 0, funct7 = 0,
-# rd = sum over the four byte lanes of rs1[i] * rs2[i]. Signedness of each operand is a design choice;
-# set these to match the RTL (and pass the same choice to sw/c/gen_conv.py and sw/c/dot4.h).
+# rd = sum over the four byte lanes of rs1[i] * rs2[i]. rs1 holds unsigned activations (u8) and rs2 signed
+# weights (s8), as in the OpenVINO INT8 U-Net (activations after ReLU are u8, weights symmetric s8) and
+# Intel VNNI vpdpbusd. Keep in sync with sw/c/dot4.h and the Makefile's DOT4_ACT.
 DOT4_OPCODE = 0x0B
-DOT4_RS1_SIGNED = True
+DOT4_RS1_SIGNED = False
 DOT4_RS2_SIGNED = True
 
 
