@@ -1,10 +1,12 @@
-# RV32I Pipelined Processor
+# RV32I Processor with a Custom INT8 Dot-Product Instruction
 
-A 5-stage pipelined RV32I processor in Verilog, targeting the Digilent Basys3 (Artix-7) FPGA.
+A single-cycle RV32I processor in Verilog for the Digilent Basys3 (Artix-7) FPGA, extended with `dot4`, a custom
+instruction that does four INT8 multiply-accumulates. The benchmark is the inner loop of an INT8 convolution from
+the U-Net I use in my dental-imaging research.
 
 ## Status
 
-Early stage. The building blocks are done:
+Work in progress: the core (`rtl/rv32i_core.v`) is not written yet. The building blocks are done:
 
 - `rtl/alu.v`: `simple_alu`, a 32-bit ALU (add, sub, mul, and) with a zero flag
 - `rtl/reg32x32_2r.v`: `regfile_32x32_2r`, 32 × 32-bit registers, two asynchronous read ports, one synchronous write port
@@ -16,15 +18,14 @@ The verification setup is ready: the riscv-tests rv32ui suite builds and runs ag
 ## Roadmap
 
 - [x] Verification setup: riscv-tests (rv32ui) on a bare-metal test environment, testbench, CI
-- [ ] Single-cycle RV32I core that passes rv32ui
-- [ ] RV32I decoder and immediate generation
-- [ ] 5-stage pipeline (IF / ID / EX / MEM / WB)
-- [ ] Forwarding and hazard detection
-- [ ] Branches and jumps
+- [x] Golden model (instruction-set simulator) with per-instruction trace comparison
 - [x] C runtime and test programs; Basys3 top level, memory-mapped I/O and build script (checked with a stand-in core)
+- [ ] Single-cycle RV32I core: decoder, immediates, branches and jumps, loads and stores; passes rv32ui
 - [ ] GCC-compiled C programs running on the core
-- [ ] Run on Basys3
-- [ ] Custom INT8 dot-product instruction (dot4): RTL to do; golden model, tests and benchmark ready
+- [ ] `dot4` in the core: golden model, tests and convolution benchmark ready; RTL to do
+- [ ] Cycle counts, LUT / FF / DSP and Fmax with and without `dot4`
+- [ ] Run the `dot4` convolution on the Basys3
+- [ ] Optional: 5-stage pipeline with forwarding and hazard detection
 
 ## Layout
 
@@ -167,4 +168,9 @@ Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
 come from `make bench` once dot4 is in the RTL.
 
-The dot4 golden model, tests and benchmark were written by Claude; the instruction's RTL is to be written by hand.
+## Credits
+
+The ALU, register file and control FSM in `rtl/` are my own, and the core and the `dot4`
+RTL will be. The verification environment (`tb/tb_core.v`, `sw/`, CI), the golden model, the C runtime and test
+programs, the Basys3 top level and build scripts (`fpga/`), and the `dot4` tests and benchmark were written with an
+AI assistant (Claude).
