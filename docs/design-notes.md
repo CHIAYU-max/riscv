@@ -28,13 +28,16 @@ including the parts after the convolution.
    run does 36,864 MACs in 78,503 instructions, 0.47 MACs per instruction. Accumulating into `rd`,
    post-increment loads and a hardware loop would bring the loop to 3 instructions (2 loads and the `dot4`),
    1.33 MACs per instruction.
-2. **Operand bandwidth.** That 1.33 is close to the ceiling for this kind of core. A `dot4` reads two 32-bit
-   registers, so it can do at most 4 MACs, and on a single-issue core with one 32-bit load per cycle each `dot4` needs
-   two loads first. Register blocking in software (one activation word reused against the weights of several output
-   channels) helps somewhat; going further means wider registers, more ports or local storage, which is where a
-   coprocessor starts.
+2. **Operand bandwidth.** A `dot4` reads two 32-bit registers, so it can do at most 4 MACs, and on a single-issue
+   core with one 32-bit load per cycle, a `dot4` whose operands are used only once needs two loads first. Reusing
+   operands in registers removes most of those loads: register blocking (`block_rb`, 2 output pixels x 4 output
+   channels) loads 6 words for 8 `dot4`s and already reaches 1.28 MACs per instruction in its inner loop with no
+   hardware change (25 instructions for 32 MACs; the convolution runs 2.45x fewer instructions than in `block_nn`).
+   Larger blocks are limited by the 31 usable registers (P x C accumulators plus P + C operands for a P x C block).
+   Going further means wider registers, more ports or local storage in the functional unit (weights or accumulators
+   kept inside it), which is where a coprocessor starts.
 3. **Memory.** The Basys3 has no DRAM and the core has 8 KiB of program and data memory, so only small tiles fit.
-   A full-size U-Net layer does not fit, and at under one MAC per cycle it would also be slow.
+   A full-size U-Net layer does not fit, and at about one MAC per cycle it would also be slow.
 
 ## When a loosely-coupled accelerator is the better choice
 

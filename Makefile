@@ -127,8 +127,8 @@ build/c/conv_mul.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/crt0.S sw/c/lin
 build/c/conv_dot4.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/dot4.h sw/c/crt0.S sw/c/link.ld
 	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_DOT4 sw/c/crt0.S $< -lgcc -o $@
 
-# U-Net block benchmark (conv -> requant + ReLU -> 2x2 max pool), four builds of sw/c/bench/block.c
-BLOCK_HEX   := build/c/block_ref.hex build/c/block_mul.hex build/c/block_dot4.hex build/c/block_nn.hex
+# U-Net block benchmark (conv -> requant + ReLU -> 2x2 max pool), five builds of sw/c/bench/block.c
+BLOCK_HEX   := build/c/block_ref.hex build/c/block_mul.hex build/c/block_dot4.hex build/c/block_nn.hex build/c/block_rb.hex
 BLOCK_STEPS ?= 10000000
 BLOCK_DEPS  := sw/c/bench/block.c build/c/block_data.h sw/c/dot4.h sw/c/nnops.h sw/c/crt0.S sw/c/link.ld
 
@@ -148,15 +148,19 @@ build/c/block_dot4.elf: $(BLOCK_DEPS)
 build/c/block_nn.elf: $(BLOCK_DEPS)
 	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_NNOPS sw/c/crt0.S $< -lgcc -o $@
 
+# block_nn with a 2 x 4 register block in the convolution (software only)
+build/c/block_rb.elf: $(BLOCK_DEPS)
+	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_RB sw/c/crt0.S $< -lgcc -o $@
+
 # Instructions per phase on the golden model (--mul only matters for block_mul)
 block-iss: $(BLOCK_HEX)
 	@fail=0; for hex in $^; do \
 	    python3 sw/iss.py --dot4 --mul --max-steps $(BLOCK_STEPS) --profile $${hex%.hex}.dump $$hex || fail=1; \
 	done; exit $$fail
 
-# On rv32i_core: block_ref needs only RV32I, block_dot4 also dot4, block_nn all three custom instructions
-block-test: build/sim_core build/c/block_ref.hex build/c/block_dot4.hex build/c/block_nn.hex
-	@for p in block_ref block_dot4 block_nn; do \
+# On rv32i_core: block_ref needs only RV32I, block_dot4 also dot4, block_nn and block_rb all three custom instructions
+block-test: build/sim_core build/c/block_ref.hex build/c/block_dot4.hex build/c/block_nn.hex build/c/block_rb.hex
+	@for p in block_ref block_dot4 block_nn block_rb; do \
 	    vvp -n build/sim_core +HEX=build/c/$$p.hex +NAME=$$p +MAX_CYCLES=$(BLOCK_STEPS) | grep -E '^(PASS|FAIL|TIMEOUT|BADADDR|ERROR)'; \
 	done
 

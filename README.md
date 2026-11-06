@@ -194,8 +194,8 @@ Open for the RTL: the 32 x 16 product needs two DSP48E1 slices (25 x 18), or one
 2x2 max pooling, u8 activations and s8 weights in HWC layout, per-channel bias and scale. `sw/c/gen_block.py`
 generates the data and the expected pooled output (using the golden model's `requant`). The three phases are separate
 functions, and `sw/iss.py --profile <dump>` counts the instructions in each, with libgcc helpers (`__mulsi3`,
-`__muldi3`) counted toward their caller. `make block-iss` builds four versions and profiles them; `make block-test`
-runs `block_ref`, `block_dot4` and `block_nn` on the core.
+`__muldi3`) counted toward their caller. `make block-iss` builds five versions and profiles them; `make block-test`
+runs all but `block_mul` on the core.
 
 Golden-model instruction counts (2026-11-06), default tile: 32 input channels, 4x4 outputs, 8 output channels, 36,864 MACs:
 
@@ -205,6 +205,7 @@ Golden-model instruction counts (2026-11-06), default tile: 32 input channels, 4
 | `block_mul` (RV32IM, golden model only) | 276,558 | 269,797 | 5,359 | 510 |
 | `block_dot4` (dot4) | 120,341 | 76,261 (63%) | 42,678 (35%) | 510 |
 | `block_nn` (dot4 + requant + max4) | 78,503 | 76,261 (97%) | 1,144 | 206 |
+| `block_rb` (`block_nn` + 2 x 4 register blocking) | 33,324 | 31,080 (93%) | 1,146 | 206 |
 
 - With dot4 alone, `requant` becomes 35% of the block: without the M extension, the 32 x 16-bit product goes through
   `__muldi3` (about 330 instructions per output). The `requant` instruction removes it, 1.5x on the whole block.
@@ -216,6 +217,11 @@ Golden-model instruction counts (2026-11-06), default tile: 32 input channels, 4
 - In the dot4 inner loop only 1 of 7 instructions is the `dot4` (two `lw`, two `addi` for the pointers, the `add`
   that accumulates, the `bne`). Accumulating into `rd`, post-increment loads and a hardware loop (as in PULP's Xpulp)
   would cut it to 3: the next bottleneck is loads and loop overhead, not multiplies.
+- Register blocking, in software only, cuts the convolution 2.45x (76,261 to 31,080 instructions). `block_rb`
+  computes 2 output pixels x 4 output channels at a time, so one iteration loads 2 activation and 4 weight words
+  and runs 8 `dot4`s (6 loads instead of 16). Its inner loop is 25 instructions for 32 MACs (1.28 MACs per
+  instruction, against 4 in 7 = 0.57 before), with no register spills; 8 of the 25 are the `add`s an accumulating
+  `dot4` would remove.
 
 Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
