@@ -156,6 +156,8 @@ Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
 | `make dot4-iss` | `dot4_test`, `nnops_test`, `conv_ref`, `conv_dot4` on the golden model with `--dot4` (enables all custom-0 instructions) |
 | `make dot4-test` | `dot4_test` and `conv_dot4` on `rv32i_core` (needs dot4 in the RTL) |
 | `make nnops-test` | `nnops_test` on `rv32i_core` (needs max4 and requant in the RTL) |
+| `make block-iss` | the U-Net block benchmark on the golden model, instructions per phase (below) |
+| `make block-test` | the U-Net block benchmark on `rv32i_core` |
 | `make bench` | cycles on the core and instructions on the golden model for each version |
 
 - `sw/c/dot4.h`: `dot4()` through GCC's `.insn r 0x0B, 0, 0, ...` (no compiler change) and the plain C `dot4_ref()`.
@@ -184,6 +186,35 @@ Open for the RTL: the 32 x 16 product needs two DSP48E1 slices (25 x 18), or one
 - `sw/c/nnops.h`: `max4()`, `requant()` through `.insn r 0x0B, 1 / 2, 0, ...`, and the plain C `max4_ref()`, `requant_ref()`.
 - `sw/c/bench/nnops_test.c`: 8 hand-computed `requant` results (checks the C reference too), 128 `max4` pairs and
   604 `requant` cases (edge accumulators x edge parameters, then pseudo-random). `make nnops-test` runs it on the core.
+
+### U-Net block benchmark
+
+`sw/c/bench/block.c` runs one encoder block on a small tile: 3x3 convolution with bias → `requant` with ReLU →
+2x2 max pooling, u8 activations and s8 weights in HWC layout, per-channel bias and scale. `sw/c/gen_block.py`
+generates the data and the expected pooled output (using the golden model's `requant`). The three phases are separate
+functions, and `sw/iss.py --profile <dump>` counts the instructions in each, with libgcc helpers (`__mulsi3`,
+`__muldi3`) counted toward their caller. `make block-iss` builds four versions and profiles them; `make block-test`
+runs `block_ref`, `block_dot4` and `block_nn` on the core.
+
+Golden-model instruction counts (2026-11-06), default tile: 32 input channels, 4x4 outputs, 8 output channels, 36,864 MACs:
+
+| Build | Total | conv | requant | pool |
+| --- | ---: | ---: | ---: | ---: |
+| `block_ref` (RV32I) | 4,522,232 | 4,478,152 | 42,678 | 510 |
+| `block_mul` (RV32IM, golden model only) | 276,558 | 269,797 | 5,359 | 510 |
+| `block_dot4` (dot4) | 120,341 | 76,261 (63%) | 42,678 (35%) | 510 |
+| `block_nn` (dot4 + requant + max4) | 78,503 | 76,261 (97%) | 1,144 | 206 |
+
+- With dot4 alone, `requant` becomes 35% of the block: without the M extension, the 32 x 16-bit product goes through
+  `__muldi3` (about 330 instructions per output). The `requant` instruction removes it, 1.5x on the whole block.
+  The share shrinks as layers get deeper (conv grows with 9 x CIN, requant does not): with 64 input channels and
+  4 output channels it is 23% (`block_dot4` 92,200 vs `block_nn` 71,173 instructions).
+- An M extension would do most of the same job (5,359 instructions for requant in `block_mul`), so `requant` is
+  mainly worth it on a core without a multiplier, like this one.
+- `max4` saves about 300 instructions (under 0.5%); pooling is too small to need hardware.
+- In the dot4 inner loop only 1 of 7 instructions is the `dot4` (two `lw`, two `addi` for the pointers, the `add`
+  that accumulates, the `bne`). Accumulating into `rd`, post-increment loads and a hardware loop (as in PULP's Xpulp)
+  would cut it to 3: the next bottleneck is loads and loop overhead, not multiplies.
 
 Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
