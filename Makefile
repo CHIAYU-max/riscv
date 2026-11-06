@@ -6,8 +6,9 @@
 # make trace T=add | P=fib [RETIRE=1]   run the core and the golden model (sw/iss.py) and compare
 #                stores; RETIRE=1 also compares every retired instruction (needs the retire_* ports)
 # make iss-test  run all tests and C programs on the golden model alone (checks sw/iss.py)
-# make dot4-iss  run the dot4 test and both convolution benchmarks on the golden model (--dot4)
+# make dot4-iss  run the dot4 and max4 / requant tests and both convolution benchmarks on the golden model (--dot4)
 # make dot4-test run the dot4 test and conv_dot4 on rv32i_core (needs dot4 in the RTL)
+# make nnops-test run the max4 / requant test on rv32i_core (needs both in the RTL)
 # make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
 # make bit P=demo [MHZ=25]      Vivado bitstream for Basys3 with program P in memory
 #                (source Vivado's settings64.sh first; output in build/fpga/)
@@ -97,7 +98,7 @@ tests: $(TEST_HEX)
 # dot4 custom instruction (README "dot4 custom instruction"). Kept out of c-test: a core
 # without dot4 must still pass everything else. dot4 is u8 x s8; DOT4_ACT=signed builds the
 # programs for s8 x s8 instead (also set DOT4_RS1_SIGNED = True in sw/iss.py).
-DOT4_HEX    := build/c/dot4_test.hex build/c/conv_ref.hex build/c/conv_dot4.hex
+DOT4_HEX    := build/c/dot4_test.hex build/c/nnops_test.hex build/c/conv_ref.hex build/c/conv_dot4.hex
 BENCH_STEPS ?= 3000000
 DOT4_ACT    ?= unsigned
 
@@ -108,6 +109,11 @@ build/c/conv_data.h: sw/c/gen_conv.py
 build/c/dot4_test.elf: sw/c/bench/dot4_test.c sw/c/dot4.h sw/c/crt0.S sw/c/link.ld
 	mkdir -p build/c
 	$(CC) $(C_CFLAGS) $(if $(filter signed,$(DOT4_ACT)),-DDOT4_RS1_SIGNED=1) sw/c/crt0.S $< -lgcc -o $@
+
+# max4 and requant (sw/c/nnops.h)
+build/c/nnops_test.elf: sw/c/bench/nnops_test.c sw/c/nnops.h sw/c/crt0.S sw/c/link.ld
+	mkdir -p build/c
+	$(CC) $(C_CFLAGS) sw/c/crt0.S $< -lgcc -o $@
 
 build/c/conv_ref.elf: sw/c/bench/conv.c build/c/conv_data.h sw/c/crt0.S sw/c/link.ld
 	$(CC) $(C_CFLAGS) -Ibuild/c sw/c/crt0.S $< -lgcc -o $@
@@ -124,6 +130,9 @@ dot4-iss: $(DOT4_HEX)
 
 dot4-test: build/sim_core build/c/dot4_test.hex build/c/conv_dot4.hex
 	sw/run_tests.sh build/sim_core build/c/dot4_test.hex build/c/conv_dot4.hex
+
+nnops-test: build/sim_core build/c/nnops_test.hex
+	sw/run_tests.sh build/sim_core build/c/nnops_test.hex
 
 bench: build/sim_core build/c/conv_ref.hex build/c/conv_mul.hex build/c/conv_dot4.hex
 	@python3 sw/iss.py --mul --max-steps $(BENCH_STEPS) build/c/conv_mul.hex
@@ -166,5 +175,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test bench bit fmax selftest xsim sim clean
+.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test bench bit fmax selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf

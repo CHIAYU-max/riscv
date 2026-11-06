@@ -27,6 +27,16 @@ DOT4_OPCODE = 0x0B
 DOT4_RS1_SIGNED = False
 DOT4_RS2_SIGNED = True
 
+# Two more custom-0 instructions for the rest of a U-Net block (also only with --dot4; R-type, funct7 = 0).
+# Keep in sync with sw/c/nnops.h.
+#   max4    funct3 = 1   rd[i] = max(rs1[i], rs2[i]) per unsigned byte lane (2x2 max pooling on u8 activations)
+#   requant funct3 = 2   rd = clamp(((rs1 * M + round) >>> shift) + zp, 0, 255), rs1 = signed 32-bit accumulator,
+#                        rs2 = {zp[31:24], 3'b0, shift[20:16], M[15:0]}: u16 multiplier, shift 0..31, u8 zero point;
+#                        round = 1 << (shift - 1) (0 when shift = 0), i.e. round half up. Clamping at 0 is the ReLU
+#                        when the output zero point is 0. Bits [23:21] are ignored.
+MAX4_FUNCT3 = 1
+REQUANT_FUNCT3 = 2
+
 
 def sext(value, bits):
     sign = 1 << (bits - 1)
@@ -36,6 +46,18 @@ def sext(value, bits):
 def byte_lane(word, i, signed):
     value = word >> (8 * i) & 0xFF
     return sext(value, 8) if signed else value
+
+
+def max4(a, b):
+    return sum(max(byte_lane(a, i, False), byte_lane(b, i, False)) << (8 * i) for i in range(4))
+
+
+def requant(acc, params):
+    m, shift, zp = params & 0xFFFF, params >> 16 & 31, params >> 24 & 0xFF
+    t = sext(acc, 32) * m                       # exact 48-bit product
+    if shift:
+        t = (t + (1 << (shift - 1))) >> shift   # Python >> on ints is arithmetic
+    return min(max(t + zp, 0), 255)
 
 
 class Halt(Exception):
@@ -180,7 +202,11 @@ class RV32I:
             pass
         elif op == DOT4_OPCODE and self.dot4 and f3 == 0 and f7 == 0:   # dot4 (custom-0)
             value = sum(byte_lane(rs1, i, DOT4_RS1_SIGNED) * byte_lane(rs2, i, DOT4_RS2_SIGNED) for i in range(4))
-        else:                                           # SYSTEM (ecall, CSRs) and anything else
+        elif op == DOT4_OPCODE and self.dot4 and f3 == MAX4_FUNCT3 and f7 == 0:      # max4 (custom-0)
+            value = max4(rs1, rs2)
+        elif op == DOT4_OPCODE and self.dot4 and f3 == REQUANT_FUNCT3 and f7 == 0:   # requant (custom-0)
+            value = requant(rs1, rs2)
+        else:                                          # SYSTEM (ecall, CSRs) and anything else
             raise Halt("ILLEGAL")
 
         if value is not None and rd != 0:
@@ -201,7 +227,7 @@ def main():
     parser.add_argument("--name", default=None)
     parser.add_argument("--trace", help="write the reference trace to this file")
     parser.add_argument("--max-steps", type=int, default=1_000_000)
-    parser.add_argument("--dot4", action="store_true", help="also decode the dot4 custom instruction")
+    parser.add_argument("--dot4", action="store_true", help="also decode the custom-0 instructions (dot4, max4, requant)")
     parser.add_argument("--mul", action="store_true", help="also decode MUL (benchmark baseline only)")
     args = parser.parse_args()
     name = args.name or args.hex.rsplit("/", 1)[-1].removesuffix(".hex")

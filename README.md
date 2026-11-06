@@ -153,8 +153,9 @@ Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
 
 | Target | What it runs |
 | --- | --- |
-| `make dot4-iss` | `dot4_test`, `conv_ref`, `conv_dot4` on the golden model with `--dot4` |
+| `make dot4-iss` | `dot4_test`, `nnops_test`, `conv_ref`, `conv_dot4` on the golden model with `--dot4` (enables all custom-0 instructions) |
 | `make dot4-test` | `dot4_test` and `conv_dot4` on `rv32i_core` (needs dot4 in the RTL) |
+| `make nnops-test` | `nnops_test` on `rv32i_core` (needs max4 and requant in the RTL) |
 | `make bench` | cycles on the core and instructions on the golden model for each version |
 
 - `sw/c/dot4.h`: `dot4()` through GCC's `.insn r 0x0B, 0, 0, ...` (no compiler change) and the plain C `dot4_ref()`.
@@ -163,6 +164,26 @@ Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
   channels, 4,608 MACs; data and checksum from `sw/c/gen_conv.py`), built three ways: plain RV32I (`conv_ref`,
   products through `__mulsi3`), RV32IM (`conv_mul`, golden model only, as a fair baseline with a hardware
   multiplier) and dot4 (`conv_dot4`, 32-bit loads, four MACs per instruction).
+
+### max4 and requant
+
+Two more custom-0 instructions (R-type, funct7 = 0) cover the rest of a U-Net block (conv → ReLU → 2x2 max pool),
+so it can be profiled before deciding whether they are worth the hardware. Golden model and tests only for now.
+
+| Instruction | funct3 | Result |
+| --- | --- | --- |
+| `max4 rd, rs1, rs2` | 1 | `rd[i] = max(rs1[i], rs2[i])` for each unsigned byte lane (u8 max pooling) |
+| `requant rd, rs1, rs2` | 2 | `rd = clamp(((rs1 * M + round) >>> shift) + zp, 0, 255)` |
+
+`requant` turns a signed 32-bit accumulator (`rs1`, bias already added) into a u8 activation.
+`rs2 = {zp[31:24], 3'b0, shift[20:16], M[15:0]}`, built with `REQUANT_PARAMS(M, shift, zp)`: the scale is
+`M / 2^shift` with a u16 `M`, so per-channel scales just load a different `rs2`. `round = 1 << (shift - 1)`
+(round half up; 0 when `shift = 0`). With the output zero point at 0 the clamp at 0 is the ReLU.
+Open for the RTL: the 32 x 16 product needs two DSP48E1 slices (25 x 18), or one if the accumulator is limited to 24 bits.
+
+- `sw/c/nnops.h`: `max4()`, `requant()` through `.insn r 0x0B, 1 / 2, 0, ...`, and the plain C `max4_ref()`, `requant_ref()`.
+- `sw/c/bench/nnops_test.c`: 8 hand-computed `requant` results (checks the C reference too), 128 `max4` pairs and
+  604 `requant` cases (edge accumulators x edge parameters, then pseudo-random). `make nnops-test` runs it on the core.
 
 Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
