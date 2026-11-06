@@ -281,6 +281,16 @@ In this project it also keeps every part of the design my own and small enough t
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
 - An accumulating `dot4` and post-increment loads, to measure how much of the 7-to-3 instruction reduction is real.
+  Both need compiler support to be used from C (see below).
+- Compiler support in LLVM's RISC-V backend, in steps:
+  1. Assembler and disassembler support, so that `dot4`, `max4` and `requant` can be written and are shown by
+     their names instead of `.insn`.
+  2. An intrinsic for each instruction, defined with TableGen and selected by the backend, replacing the inline
+     assembly in `sw/c/dot4.h` and `sw/c/nnops.h`.
+  3. Code generation for the post-increment loads and the accumulating `dot4`, so that the inner loop written with
+     the intrinsic compiles to the shorter sequence; then the U-Net block benchmark measures the hardware and compiler changes together.
+  4. (Harder, later) recognizing the plain C byte-wise multiply-accumulate loop and turning it into `dot4` without
+     an intrinsic.
 - A small memory-mapped 3x3 convolution coprocessor with its own line buffer, compared with `dot4` on the same layer,
   to place the two approaches side by side with measured numbers.
 - Gemmini in simulation (Chipyard) as a reference point for the loosely-coupled end.
