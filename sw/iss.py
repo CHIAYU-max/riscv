@@ -10,9 +10,16 @@ the testbench's trace (see README.md, "Golden model and trace comparison"):
                                                   (rd=00 val=00000000 when nothing is written)
   S addr=<addr> data=<data> strb=<strb>         one line per store, data already in its byte lanes
 
+With --profile it counts the instructions executed in each function, using the labels in the
+program's objdump file; libgcc helpers (names starting with "__", e.g. __mulsi3) count toward the
+function that called them, so each function's count includes the work it delegates.
+
 usage: sw/iss.py build/tests/add.hex [--trace build/trace/add.ref] [--max-steps n]
+                 [--profile build/c/fib.dump]
 """
 import argparse
+import bisect
+import re
 import sys
 
 MEM_BYTES = 64 * 1024
@@ -180,8 +187,9 @@ class RV32I:
                 value = sext(rs1, 32) >> shamt
             else:
                 raise Halt("ILLEGAL")
-        elif op == 0x33 and f7 == 1 and f3 == 0 and self.mul:   # MUL (M extension, only with --mul)
-            value = rs1 * rs2
+        elif op == 0x33 and f7 == 1 and f3 <= 3 and self.mul:   # MUL, MULH, MULHSU, MULHU (only with --mul)
+            s1, s2 = sext(rs1, 32), sext(rs2, 32)
+            value = (rs1 * rs2, s1 * s2 >> 32, s1 * rs2 >> 32, rs1 * rs2 >> 32)[f3]
         elif op == 0x33:                                # OP
             shamt = rs2 & 31
             value = {
@@ -221,6 +229,35 @@ class RV32I:
         return f"R pc={pc:08x} insn={insn:08x} rd={rd:02d} val={value:08x}"
 
 
+class Profile:
+    """Instruction counts per function, from the '<addr> <name>:' labels of an objdump -d file."""
+
+    def __init__(self, dump_path):
+        labels = []
+        with open(dump_path) as f:
+            for line in f:
+                m = re.match(r"([0-9a-f]+) <([^>]+)>:$", line.strip())
+                if m:
+                    labels.append((int(m.group(1), 16), m.group(2)))
+        labels.sort()
+        self.starts = [addr for addr, _ in labels]
+        self.names = [name for _, name in labels]
+        self.counts = {}
+        self.current = "?"
+
+    def count(self, pc):
+        i = bisect.bisect_right(self.starts, pc) - 1
+        name = self.names[i] if i >= 0 else "?"
+        if not name.startswith("__"):           # a libgcc helper counts toward its caller
+            self.current = name
+        self.counts[self.current] = self.counts.get(self.current, 0) + 1
+
+    def report(self):
+        total = sum(self.counts.values())
+        for name, n in sorted(self.counts.items(), key=lambda item: -item[1]):
+            print(f"  {name:<16} {n:>10,}  {100 * n / total:5.1f}%")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("hex")
@@ -228,14 +265,18 @@ def main():
     parser.add_argument("--trace", help="write the reference trace to this file")
     parser.add_argument("--max-steps", type=int, default=1_000_000)
     parser.add_argument("--dot4", action="store_true", help="also decode the custom-0 instructions (dot4, max4, requant)")
-    parser.add_argument("--mul", action="store_true", help="also decode MUL (benchmark baseline only)")
+    parser.add_argument("--mul", action="store_true", help="also decode MUL, MULH, MULHSU, MULHU (benchmark baselines only)")
+    parser.add_argument("--profile", metavar="DUMP", help="print instructions per function, labels from this objdump file")
     args = parser.parse_args()
     name = args.name or args.hex.rsplit("/", 1)[-1].removesuffix(".hex")
 
     cpu = RV32I(args.hex, dot4=args.dot4, mul=args.mul)
+    profile = Profile(args.profile) if args.profile else None
     steps = 0
     try:
         while steps < args.max_steps:
+            if profile:
+                profile.count(cpu.pc)
             cpu.step()
             steps += 1
         result, detail = "TIMEOUT", 0
@@ -251,6 +292,8 @@ def main():
         print(f"FAIL    {name}: test case {detail} ({steps} instructions)")
     else:
         print(f"{result} {name}: pc 0x{cpu.pc:08x} ({steps} instructions)")
+    if profile:
+        profile.report()
     sys.exit(0 if result == "PASS" else 1)
 
 
