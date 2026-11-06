@@ -10,7 +10,9 @@ set out build/fmax
 file mkdir $out
 
 read_verilog [glob fpga/rtl/*.v]
-foreach f $core_rtl { read_verilog $f }
+foreach f $core_rtl {
+    if {[file extension $f] eq ".sv"} { read_verilog -sv $f } else { read_verilog $f }
+}
 read_xdc fpga/basys3.xdc
 
 synth_design -top basys3_top -part xc7a35tcpg236-1 \

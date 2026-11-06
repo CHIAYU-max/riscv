@@ -59,6 +59,21 @@ After cloning, fetch the tests with `git submodule update --init` (not `--recurs
 
 The core has to treat `FENCE` as a no-op; no CSRs, traps or `ECALL` are needed.
 
+The core sources can be Verilog (`rtl/*.v`) or SystemVerilog (`rtl/*.sv`); the Makefile and the Vivado scripts take
+both, and packages named `rtl/*_pkg.sv` are compiled first. Checked on 2026-11-07 with a small test design
+(a package with an `enum` opcode type, a `struct packed` control bundle and a function; `logic`, `always_ff`,
+`always_comb`, `unique case`, a `generate` loop) in Icarus 12, Verilator 5.020 and Vivado 2025.2.1 synthesis.
+Icarus 12 limits to keep in mind:
+
+- no `inside` operator (write the comparisons out);
+- `unique` / `unique0` on `case` is accepted but not checked;
+- part-selects inside `always_comb` work but give a "constant selects" warning (the whole vector is in the
+  sensitivity list);
+- `.name()` on an enum only works on a variable, not on a struct member or a net (testbench only);
+- `.sv` files without a `` `timescale `` inherit the testbench's, with a warning.
+
+`make lint` runs Verilator's lint on the core sources, which catches latches and width mismatches that Icarus accepts.
+
 ## Memory map
 
 | Address | Simulation (`tb/tb_core.v`) | Basys3 (`fpga/rtl/basys3_top.v`) |
@@ -103,6 +118,42 @@ make test-one T=add VCD=1  # one test, waveform in build/add.vcd; disassembly in
 
 A failing test prints the riscv-tests case number (`FAIL add: test case 7`); look for `test_7` in `build/tests/add.dump`.
 Tools in WSL: `sudo apt install iverilog gcc-riscv64-unknown-elf`. CI runs the same steps on every push.
+
+### Random programs
+
+`sw/gen_random.py` writes random RV32I programs: every computational instruction with random registers and
+immediates (edge values drawn more often, `x0` as a possible destination), loads and stores of every width in a data
+buffer, forward branches, `JAL` and `JALR` (including odd offsets, to check that bit 0 of the target is cleared),
+`FENCE`, and with `CUSTOM=1` also `dot4`, `max4` and `requant`. Each program ends by storing x1..x31, so register
+state is compared even without the retire ports. They have no expected result of their own: `make random-test` runs
+each one on the core and on the golden model and compares the traces.
+
+```bash
+make random-test                       # 50 programs (seeds 1..50), stores and final registers
+make random-test RETIRE=1 CUSTOM=1     # every retired instruction too, with the custom instructions
+make random-test RAND_SEED=7 RAND_COUNT=1   # rerun one failing seed; files in build/random/rand_7.*
+make random-iss                        # the same programs on the golden model alone (checks the generator)
+```
+
+To check that the comparison finds real bugs, ten one-line bugs were put into copies of the golden model and run as
+the "core" on 60 programs (seeds 1..30 and, with `CUSTOM=1`, 1000..1029); every bug was found. Programs that found it
+(2026-11-07):
+
+| Injected bug | Retire + stores | Stores only |
+| --- | ---: | ---: |
+| `x0` writable | 60 | 58 |
+| `sra` as `srl` | 32 | 10 |
+| `jalr` keeps bit 0 | 57 | 57 |
+| `lh` zero-extends | 57 | 28 |
+| `sltiu` immediate not sign-extended | 49 | 20 |
+| `bltu` compares signed | 39 | 24 |
+| `sh` in the wrong byte lanes | 59 | 59 |
+| `auipc` without the PC | 60 | 60 |
+| `srai` uses 4 shift bits | 50 | 29 |
+| `requant` without rounding (custom programs only) | 7 | 7 |
+
+Comparing every retired instruction finds bugs in more programs and points at the first wrong instruction, so the
+retire ports are worth adding to the core.
 
 ## Golden model and trace comparison
 

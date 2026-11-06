@@ -15,9 +15,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y iverilog gcc-riscv64-unknown-elf
       - name: Golden model (sw/iss.py) on every test and C program
         run: make iss-test
+      - name: Random programs on the golden model (checks sw/gen_random.py)
+        run: make random-iss RAND_COUNT=20 && make random-iss RAND_COUNT=20 RAND_SEED=1000 CUSTOM=1
       - name: Testbench self-test
         run: make selftest
       - name: riscv-tests (rv32ui) and C programs
         # Runs once the core exists (rtl/rv32i_core.v)
         run: |
-          if [ -f rtl/rv32i_core.v ]; then make test && make c-test; else echo "rtl/rv32i_core.v not found, skipping"; fi
+          if [ -f rtl/rv32i_core.v ] || [ -f rtl/rv32i_core.sv ]; then make test && make c-test && make random-test RAND_COUNT=20; else echo "rtl/rv32i_core.v / .sv not found, skipping"; fi

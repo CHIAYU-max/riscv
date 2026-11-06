@@ -6,6 +6,8 @@
 # make trace T=add | P=fib [RETIRE=1]   run the core and the golden model (sw/iss.py) and compare
 #                stores; RETIRE=1 also compares every retired instruction (needs the retire_* ports)
 # make iss-test  run all tests and C programs on the golden model alone (checks sw/iss.py)
+# make random-test [RAND_COUNT=50] [RAND_SEED=1] [CUSTOM=1] [RETIRE=1]   random programs, core vs golden model
+# make random-iss  the same random programs on the golden model alone (checks the generator)
 # make dot4-iss  run the dot4 and max4 / requant tests and both convolution benchmarks on the golden model (--dot4)
 # make dot4-test run the dot4 test and conv_dot4 on rv32i_core (needs dot4 in the RTL)
 # make nnops-test run the max4 / requant test on rv32i_core (needs both in the RTL)
@@ -18,6 +20,7 @@
 #                LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/)
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
 # make sim       top_processor demo, Icarus Verilog
+# make lint      Verilator lint of the core sources (rtl/*.sv and rtl/*.v)
 # Tools (WSL): sudo apt install iverilog gcc-riscv64-unknown-elf
 
 RISCV_PREFIX ?= riscv64-unknown-elf-
@@ -34,8 +37,9 @@ RV32UI ?= simple add addi and andi auipc beq bge bgeu blt bltu bne jal jalr \
           sra srai srl srli sub xor xori ld_st st_ld
 TEST_HEX := $(addprefix build/tests/,$(addsuffix .hex,$(RV32UI)))
 
-# Core sources: everything in rtl/ except the top_processor demo
-CORE_RTL := $(filter-out rtl/top_processor.v,$(wildcard rtl/*.v))
+# Core sources: everything in rtl/ except the top_processor demo. SystemVerilog packages (rtl/*_pkg.sv)
+# come first so that the modules importing them compile.
+CORE_RTL := $(wildcard rtl/*_pkg.sv) $(filter-out rtl/%_pkg.sv,$(wildcard rtl/*.sv)) $(filter-out rtl/top_processor.v,$(wildcard rtl/*.v))
 
 # top_processor demo
 DEMO_RTL := $(wildcard rtl/*.v)
@@ -91,6 +95,20 @@ trace: $(TRACE_SIM) $(TRACE_HEX)
 	-vvp -n $(TRACE_SIM) +HEX=$(TRACE_HEX) +NAME=$(TRACE_NAME) +TRACE=build/trace/$(TRACE_NAME).core $(if $(VCD),+VCD)
 	-python3 sw/iss.py $(TRACE_HEX) --trace build/trace/$(TRACE_NAME).ref
 	python3 sw/trace_diff.py build/trace/$(TRACE_NAME).ref build/trace/$(TRACE_NAME).core --dump $(TRACE_HEX:.hex=.dump)
+
+# Random programs (sw/gen_random.py): random-iss checks the generator on the golden model alone,
+# random-test compares the core with the golden model (RETIRE=1 also compares every retired instruction).
+# CUSTOM=1 adds dot4, max4 and requant. Failing programs stay in build/random/ for debugging.
+RAND_SEED  ?= 1
+RAND_COUNT ?= 50
+RAND_LEN   ?= 300
+RAND_ARGS   = --seed $(RAND_SEED) --count $(RAND_COUNT) --length $(RAND_LEN) $(if $(CUSTOM),--custom)
+
+random-iss:
+	sw/run_random.sh $(RAND_ARGS)
+
+random-test: $(TRACE_SIM)
+	sw/run_random.sh --sim $(TRACE_SIM) $(RAND_ARGS)
 
 iss-test: $(TEST_HEX) $(C_HEX)
 	@fail=0; for hex in $^; do python3 sw/iss.py $$hex || fail=1; done; exit $$fail
@@ -180,6 +198,10 @@ bench: build/sim_core build/c/conv_ref.hex build/c/conv_mul.hex build/c/conv_dot
 	    python3 sw/iss.py --dot4 --max-steps $(BENCH_STEPS) build/c/$$p.hex; \
 	done
 
+# Lint the core with Verilator (catches latches, width mismatches and unused signals that Icarus accepts)
+lint:
+	verilator --lint-only -Wall -Wno-DECLFILENAME --top-module rv32i_core $(CORE_RTL)
+
 build/sim_core: tb/tb_core.v $(CORE_RTL)
 	mkdir -p build
 	iverilog -g2012 -Wall -s tb_core -o $@ tb/tb_core.v $(CORE_RTL)
@@ -214,5 +236,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
+.PHONY: lint random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf
