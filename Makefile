@@ -11,6 +11,7 @@
 # make nnops-test run the max4 / requant test on rv32i_core (needs both in the RTL)
 # make block-iss instructions per phase of the U-Net block benchmark (conv, requant, pool) on the golden model
 # make block-test the U-Net block benchmark on rv32i_core (cycles)
+# make block4-iss INT4 version of the block benchmark (dot8, golden model only) next to block_nn and block_rb
 # make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
 # make bit P=demo [MHZ=25]      Vivado bitstream for Basys3 with program P in memory
 #                (source Vivado's settings64.sh first; output in build/fpga/)
@@ -158,6 +159,26 @@ block-iss: $(BLOCK_HEX)
 	    python3 sw/iss.py --dot4 --mul --max-steps $(BLOCK_STEPS) --profile $${hex%.hex}.dump $$hex || fail=1; \
 	done; exit $$fail
 
+# INT4 experiment: the same block with u4 activations and s4 weights (sw/c/bench/block4.c, dot8 in sw/iss.py only)
+BLOCK4_HEX  := build/c/block_q4.hex build/c/block_q4rb.hex
+BLOCK4_DEPS := sw/c/bench/block4.c build/c/block4_data.h sw/c/dot8.h sw/c/nnops.h sw/c/crt0.S sw/c/link.ld
+
+build/c/block4_data.h: sw/c/gen_block.py sw/iss.py
+	mkdir -p build/c
+	python3 $< --bits 4 --out $@
+
+build/c/block_q4.elf: $(BLOCK4_DEPS)
+	$(CC) $(C_CFLAGS) -Ibuild/c sw/c/crt0.S $< -lgcc -o $@
+
+build/c/block_q4rb.elf: $(BLOCK4_DEPS)
+	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_RB sw/c/crt0.S $< -lgcc -o $@
+
+# INT8 (block_nn, block_rb) and INT4 (block_q4, block_q4rb) side by side, then code + data size of each
+block4-iss: build/c/block_nn.hex build/c/block_rb.hex $(BLOCK4_HEX)
+	@fail=0; for hex in $^; do \
+	    python3 sw/iss.py --dot4 --max-steps $(BLOCK_STEPS) --profile $${hex%.hex}.dump $$hex || fail=1; \
+	done; $(RISCV_PREFIX)size $(^:.hex=.elf); exit $$fail
+
 # On rv32i_core: block_ref needs only RV32I, block_dot4 also dot4, block_nn and block_rb all three custom instructions
 block-test: build/sim_core build/c/block_ref.hex build/c/block_dot4.hex build/c/block_nn.hex build/c/block_rb.hex
 	@for p in block_ref block_dot4 block_nn block_rb; do \
@@ -214,5 +235,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
+.PHONY: test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test block4-iss bench bit fmax selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf

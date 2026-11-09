@@ -62,6 +62,40 @@ In this project it also keeps every part of the design my own and small enough t
   on a core without a multiplier.
 - Max pooling is under 0.5% of the block, so `max4` is not worth its hardware.
 
+## INT4 experiment (golden model only)
+
+To see what 4-bit weights and activations would buy on this core, the golden model has one more custom-0
+instruction, `dot8` (funct3 = 3): eight u4 x s4 products summed into `rd`, nibble lane i = bits [4i+3:4i]. It is not
+in the RTL. `sw/c/bench/block4.c` runs the same U-Net block as `block.c` with u4 activations and symmetric s4 weights
+(-7..7) packed two per byte (`sw/c/gen_block.py --bits 4`); `requant` still clamps to 255, so the clamp to 15 is one
+extra compare in software, and the pool phase packs the output back into nibbles for the next layer.
+`make block4-iss` runs it next to the INT8 builds. The data is random, with the same ReLU / saturation split as the
+INT8 tile (73 vs 74 of 128 outputs zero, 12 saturated), so these numbers say nothing about accuracy.
+
+Golden-model instruction counts (2026-11-08), default tile (32 input channels, 4x4 outputs, 8 output channels,
+36,864 MACs); "text" is code plus constant data (weights, activations), from `riscv64-unknown-elf-size`:
+
+| Build | Total | conv | requant | pool | text (bytes) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `block_nn` (INT8: dot4 + requant + max4) | 78,503 | 76,261 | 1,144 | 206 | 4,360 |
+| `block_rb` (INT8, 2 x 4 register blocking) | 33,324 | 31,080 | 1,146 | 206 | 4,616 |
+| `block_q4` (INT4: dot8 + requant + max4) | 44,699 | 42,179 | 1,553 | 188 | 2,652 |
+| `block_q4rb` (INT4, 2 x 4 register blocking) | 19,447 | 16,927 | 1,553 | 188 | 2,932 |
+
+- INT4 runs the block 1.76x (`block_nn` to `block_q4`) and 1.71x (`block_rb` to `block_q4rb`) faster in
+  instructions, not 2x: the inner loop has the same 25 instructions and now does 64 MACs instead of 32, but the
+  address arithmetic per kernel position and the requant phase do not shrink. With 64 input channels `block_q4rb`
+  runs 73,728 MACs in 31,080 convolution instructions, exactly what `block_rb` needs for half the MACs.
+- The software clamp to 15 adds about 3 instructions per output (requant 1,144 to 1,553). Bits [23:21] of the
+  `requant` parameter word are unused and could select the output width instead.
+- Memory matters more than speed on the Basys3: with 64 input channels and 8 output channels the INT8 block does
+  not fit in the 8 KiB RAM (the linker reports `block_nn` 296 and `block_rb` 536 bytes over), while the INT4 one
+  does (`block_q4` 4,420 bytes text, `block_q4rb` 4,668, both with 656 bytes bss).
+  With 128 input channels neither fits.
+- Not measured yet: the accuracy of a 4-bit U-Net on the dental X-rays (likely needs quantization-aware
+  training), and the area of eight 4 x 4 multipliers against four 8 x 8 ones on the FPGA. INT4 rather than FP4 because a CNN with BN and ReLU
+  has no large activation outliers, and an integer `dot8` feeds the existing integer `requant` directly.
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.

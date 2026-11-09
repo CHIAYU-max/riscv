@@ -44,6 +44,11 @@ DOT4_RS2_SIGNED = True
 MAX4_FUNCT3 = 1
 REQUANT_FUNCT3 = 2
 
+# INT4 experiment (also only with --dot4; not planned for the RTL yet). Keep in sync with sw/c/dot8.h.
+#   dot8    funct3 = 3   rd = sum over the eight nibble lanes of rs1[i] * rs2[i], rs1 lanes u4 (activations),
+#                        rs2 lanes s4 (weights); lane i is bits [4i+3:4i]
+DOT8_FUNCT3 = 3
+
 
 def sext(value, bits):
     sign = 1 << (bits - 1)
@@ -53,6 +58,15 @@ def sext(value, bits):
 def byte_lane(word, i, signed):
     value = word >> (8 * i) & 0xFF
     return sext(value, 8) if signed else value
+
+
+def nibble_lane(word, i, signed):
+    value = word >> (4 * i) & 0xF
+    return sext(value, 4) if signed else value
+
+
+def dot8(a, b):
+    return sum(nibble_lane(a, i, False) * nibble_lane(b, i, True) for i in range(8))
 
 
 def max4(a, b):
@@ -214,6 +228,8 @@ class RV32I:
             value = max4(rs1, rs2)
         elif op == DOT4_OPCODE and self.dot4 and f3 == REQUANT_FUNCT3 and f7 == 0:   # requant (custom-0)
             value = requant(rs1, rs2)
+        elif op == DOT4_OPCODE and self.dot4 and f3 == DOT8_FUNCT3 and f7 == 0:      # dot8 (custom-0, INT4)
+            value = dot8(rs1, rs2)
         else:                                          # SYSTEM (ecall, CSRs) and anything else
             raise Halt("ILLEGAL")
 
@@ -264,7 +280,7 @@ def main():
     parser.add_argument("--name", default=None)
     parser.add_argument("--trace", help="write the reference trace to this file")
     parser.add_argument("--max-steps", type=int, default=1_000_000)
-    parser.add_argument("--dot4", action="store_true", help="also decode the custom-0 instructions (dot4, max4, requant)")
+    parser.add_argument("--dot4", action="store_true", help="also decode the custom-0 instructions (dot4, max4, requant, dot8)")
     parser.add_argument("--mul", action="store_true", help="also decode MUL, MULH, MULHSU, MULHU (benchmark baselines only)")
     parser.add_argument("--profile", metavar="DUMP", help="print instructions per function, labels from this objdump file")
     args = parser.parse_args()
