@@ -156,9 +156,15 @@ BLOCK_HEX   := build/c/block_ref.hex build/c/block_mul.hex build/c/block_dot4.he
 BLOCK_STEPS ?= 10000000
 BLOCK_DEPS  := sw/c/bench/block.c build/c/block_data.h sw/c/dot4.h sw/c/nnops.h sw/c/crt0.S sw/c/link.ld
 
-build/c/block_data.h: sw/c/gen_block.py sw/iss.py
+# BLOCK_WEIGHTS=<layer.json> (sw/export_layer.py) uses a trained layer instead of random weights; block_args
+# changes whenever the generator arguments do, so switching back and forth rebuilds the data
+BLOCK_GEN_ARGS := $(if $(BLOCK_WEIGHTS),--weights $(BLOCK_WEIGHTS))
+build/c/block_args: FORCE
+	@mkdir -p build/c; echo '$(BLOCK_GEN_ARGS)' | cmp -s - $@ || echo '$(BLOCK_GEN_ARGS)' > $@
+
+build/c/block_data.h: sw/c/gen_block.py sw/iss.py build/c/block_args $(BLOCK_WEIGHTS)
 	mkdir -p build/c
-	python3 $< --out $@
+	python3 $< --out $@ $(BLOCK_GEN_ARGS)
 
 build/c/block_ref.elf: $(BLOCK_DEPS)
 	$(CC) $(C_CFLAGS) -Ibuild/c sw/c/crt0.S $< -lgcc -o $@
@@ -244,5 +250,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
+.PHONY: FORCE lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf

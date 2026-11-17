@@ -281,6 +281,13 @@ Golden-model instruction counts (2026-11-06), default tile: 32 input channels, 4
   instruction, against 4 in 7 = 0.57 before), with no register spills; 8 of the 25 are the `add`s an accumulating
   `dot4` would remove.
 
+The block can also run with the weights of a trained layer: `sw/export_layer.py` folds the BatchNorm into a
+3x3 convolution of a PyTorch checkpoint, quantizes it per output channel to s8 and writes JSON, and
+`make block-iss BLOCK_WEIGHTS=<file>` (or `block-test`) builds the same five programs from it. The input tile
+stays random, so no image is needed. With the dental U-Net's `head.0.block.3` (32 to 32 channels at 512 x 512,
+one of its most expensive layers; first 8 output channels) all five builds pass on the golden model, with
+instruction counts within 1% of the random-weight ones. The exported weights stay out of the repository.
+
 Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
 come from `make bench` once dot4 is in the RTL.
