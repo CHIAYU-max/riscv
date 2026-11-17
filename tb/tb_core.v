@@ -20,7 +20,11 @@ module tb_core;
 
     reg clk = 1'b0;
     reg rst = 1'b1;
-    always #5 clk = ~clk;
+    // half clock period in ns; the post-layout simulation (asic/run_asic.sh) sets it to half the target cycle
+`ifndef TB_HALF_PERIOD
+`define TB_HALF_PERIOD 5
+`endif
+    always #(`TB_HALF_PERIOD) clk = ~clk;
 
     reg [31:0] mem [0:MEM_WORDS-1];
 

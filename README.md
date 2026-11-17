@@ -36,6 +36,7 @@ sw/env/              bare-metal riscv-tests environment (riscv_test.h, link.ld)
 sw/c/                C runtime (crt0.S, link.ld, mmio.h) and test / demo programs
 sw/                  hex conversion and test runner scripts
 fpga/                Basys3 top level, memory, 7-segment driver, XDC, Vivado build script
+asic/                TSMC 0.13 um flow: DC, ICC2, post-layout simulation, PrimeTime / PrimePower, ICV (asic/README.md)
 third_party/         riscv-tests (git submodule)
 docs/                design notes (related work, limits, plans)
 ```
@@ -114,7 +115,14 @@ The memory reads are asynchronous (core interface above), so the RAM is distribu
 make selftest              # testbench check with a stand-in core (tb/selftest_core.v)
 make test                  # build rv32ui and run every test, prints "N / 40 passed"
 make test-one T=add VCD=1  # one test, waveform in build/add.vcd; disassembly in build/tests/add.dump
+make progress              # rv32ui grouped into bring-up stages, pass / fail and the next test to work on
+make lint WIP=1            # lint without unused-signal warnings while the core is half written
 ```
+
+`make progress` runs every test on the golden model first and records the instructions it actually executes, then
+puts each test in the first bring-up stage after which all of them exist: 0 `simple` (LUI, ADDI, SW, FENCE),
+1 result checks (BNE, JAL), 2 immediate ALU, 3 register ALU, 4 branches, JALR and AUIPC, 5 loads and stores.
+`make progress PLAN=1` prints the stages without a core.
 
 A failing test prints the riscv-tests case number (`FAIL add: test case 7`); look for `test_7` in `build/tests/add.dump`.
 Tools in WSL: `sudo apt install iverilog gcc-riscv64-unknown-elf`. CI runs the same steps on every push.
@@ -273,6 +281,13 @@ Golden-model instruction counts (2026-11-06), default tile: 32 input channels, 4
   and runs 8 `dot4`s (6 loads instead of 16). Its inner loop is 25 instructions for 32 MACs (1.28 MACs per
   instruction, against 4 in 7 = 0.57 before), with no register spills; 8 of the 25 are the `add`s an accumulating
   `dot4` would remove.
+
+The block can also run with the weights of a trained layer: `sw/export_layer.py` folds the BatchNorm into a
+3x3 convolution of a PyTorch checkpoint, quantizes it per output channel to s8 and writes JSON, and
+`make block-iss BLOCK_WEIGHTS=<file>` (or `block-test`) builds the same five programs from it. The input tile
+stays random, so no image is needed. With the dental U-Net's `head.0.block.3` (32 to 32 channels at 512 x 512,
+one of its most expensive layers; first 8 output channels) all five builds pass on the golden model, with
+instruction counts within 1% of the random-weight ones. The exported weights stay out of the repository.
 
 Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
