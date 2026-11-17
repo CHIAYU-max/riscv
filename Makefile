@@ -1,4 +1,6 @@
 # make test      build riscv-tests (rv32ui) and run them on rv32i_core (Icarus Verilog)
+# make progress  rv32ui grouped into bring-up stages by the instructions each test needs, with pass / fail
+#                on rv32i_core and the next test to work on; PLAN=1 prints the stages without a core
 # make test-one T=add [VCD=1]   run one test; VCD=1 writes build/add.vcd
 # make selftest  check the testbench with a stand-in core (needs only iverilog)
 # make c-test    build the C programs in sw/c/programs and run them on rv32i_core
@@ -20,7 +22,8 @@
 #                LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/)
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
 # make sim       top_processor demo, Icarus Verilog
-# make lint      Verilator lint of the core sources (rtl/*.sv and rtl/*.v)
+# make lint [WIP=1]  Verilator lint of the core sources (rtl/*.sv and rtl/*.v); WIP=1 hides unused-signal and
+#                unused-parameter warnings while the core is half written (the CI and the final check use plain lint)
 # Tools (WSL): sudo apt install iverilog gcc-riscv64-unknown-elf
 
 RISCV_PREFIX ?= riscv64-unknown-elf-
@@ -81,6 +84,9 @@ FMAX_MHZ ?= 50
 fmax: build/c/$(P).hex
 	$(VIVADO) -mode batch -nojournal -log build/fmax.log -source fpga/fmax.tcl \
 	    -tclargs build/c/$(P).hex $(FMAX_MHZ) $(CORE) | grep FMAX_DONE
+
+progress: $(if $(PLAN),,build/sim_core) $(TEST_HEX)
+	@python3 sw/progress.py $(if $(PLAN),,--sim build/sim_core) $(TEST_HEX)
 
 test-one: build/sim_core build/tests/$(T).hex
 	vvp -n build/sim_core +HEX=build/tests/$(T).hex +NAME=$(T) $(if $(VCD),+VCD)
@@ -199,8 +205,10 @@ bench: build/sim_core build/c/conv_ref.hex build/c/conv_mul.hex build/c/conv_dot
 	done
 
 # Lint the core with Verilator (catches latches, width mismatches and unused signals that Icarus accepts)
+# WIP=1: unused signals / parameters are expected while the decoder and datapath are being filled in
+LINT_WIP := $(if $(WIP),-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM)
 lint:
-	verilator --lint-only -Wall -Wno-DECLFILENAME --top-module rv32i_core $(CORE_RTL)
+	verilator --lint-only -Wall -Wno-DECLFILENAME $(LINT_WIP) --top-module rv32i_core $(CORE_RTL)
 
 build/sim_core: tb/tb_core.v $(CORE_RTL)
 	mkdir -p build
@@ -236,5 +244,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: lint random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
+.PHONY: lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf

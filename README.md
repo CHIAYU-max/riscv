@@ -114,7 +114,14 @@ The memory reads are asynchronous (core interface above), so the RAM is distribu
 make selftest              # testbench check with a stand-in core (tb/selftest_core.v)
 make test                  # build rv32ui and run every test, prints "N / 40 passed"
 make test-one T=add VCD=1  # one test, waveform in build/add.vcd; disassembly in build/tests/add.dump
+make progress              # rv32ui grouped into bring-up stages, pass / fail and the next test to work on
+make lint WIP=1            # lint without unused-signal warnings while the core is half written
 ```
+
+`make progress` runs every test on the golden model first and records the instructions it actually executes, then
+puts each test in the first bring-up stage after which all of them exist: 0 `simple` (LUI, ADDI, SW, FENCE),
+1 result checks (BNE, JAL), 2 immediate ALU, 3 register ALU, 4 branches, JALR and AUIPC, 5 loads and stores.
+`make progress PLAN=1` prints the stages without a core.
 
 A failing test prints the riscv-tests case number (`FAIL add: test case 7`); look for `test_7` in `build/tests/add.dump`.
 Tools in WSL: `sudo apt install iverilog gcc-riscv64-unknown-elf`. CI runs the same steps on every push.
