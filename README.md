@@ -36,6 +36,7 @@ sw/env/              bare-metal riscv-tests environment (riscv_test.h, link.ld)
 sw/c/                C runtime (crt0.S, link.ld, mmio.h) and test / demo programs
 sw/                  hex conversion and test runner scripts
 fpga/                Basys3 top level, memory, 7-segment driver, XDC, Vivado build script
+asic/                TSMC 0.13 um flow: DC, ICC2, post-layout simulation, PrimeTime / PrimePower, ICV (asic/README.md)
 third_party/         riscv-tests (git submodule)
 docs/                design notes (related work, limits, plans)
 ```
