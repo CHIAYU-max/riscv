@@ -91,8 +91,28 @@ What this shows so far:
   (`HLS 214-250: Ignore array partition/reshape applied to 'x' in struct`), so the input has only two memory ports
   and each output pixel waits 144 cycles for its 288 inputs (16 pixels x 144 = 2,304). With the partition applied
   (newer Vitis HLS), rf 1 should finish in tens of cycles and be even larger.
-- The rf 8 / 32 latency range comes from the Resource strategy's `PartitionLoop` (40 to 183 cycles per pixel);
-  only C/RTL co-simulation gives the actual count.
+- The rf 8 / 32 latency range comes from the Resource strategy's `PartitionLoop` (40 to 183 cycles per pixel).
+  Vitis HLS 2025.2.1 (local, WSL) schedules rf 32 to a fixed 670 cycles.
+- C/RTL co-simulation (Verilog) passes for all six: the generated RTL is bit-exact too.
+
+### Design points that fit (2026-11-19, same tools)
+
+| Design | LUT | FF | DSP | BRAM tiles | Latency (cycles) | WNS at 10 ns | Fmax estimate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `io_parallel`, rf 144 | 29,146 (140%) | 25,910 | 20 | 9 | 2,533 - 4,821 | -2.77 ns | ~78 MHz |
+| `io_parallel`, rf 288 | 26,510 (127%) | 21,196 | 9 | 4 | 4,788 - 7,076 | -3.89 ns | ~72 MHz |
+| `io_stream`, rf 32 | 3,945 (19%) | 6,302 (15%) | 75 (83%) | 14 | 1,486 - 1,513 | +2.13 ns | ~127 MHz |
+| `io_stream`, rf 144 | 3,234 (16%) | 5,746 (14%) | 20 (22%) | 8 | 5,342 - 5,473 | +0.33 ns | ~103 MHz |
+
+All four bit-exact in C simulation and pass co-simulation.
+
+- With `io_parallel` the reuse factor hardly matters past 32: the LUTs are in the fully partitioned 1,152-byte
+  input, the im2col multiplexers and the output, not in the multipliers.
+- **`io_stream` (line buffer) is the design point to compare with the core**: it fits with room to spare, meets
+  100 MHz, and a stream interface is what a coprocessor next to the core would have. rf 32 is DSP-bound (75 of 90),
+  rf 144 leaves DSPs for the core.
+- Against `block_nn` (78,503 instructions): about 52x fewer cycles for `io_stream` rf 32 and 14x for rf 144, for
+  one layer shape with the weights built in.
 
 ## Notes on the tools
 
@@ -105,9 +125,15 @@ What this shows so far:
   32-byte output on ports, which a Basys3 board design could not do. A board design would need `io_stream` or an AXI
   wrapper, which adds area that is not in these numbers.
 
+- hls4ml's `build_prj.tcl` does not read command-line options, only `build_opt.tcl` (defaults: csim, synth, cosim
+  and validation on, vsynth off). `hls/run_local.sh` rewrites it.
+- Vitis 2025.2.1 is installed in WSL (`/Xilinx/2025.2.1`, the version `make fmax` uses): run it with
+  `vitis-run --mode hls --tcl build_prj.tcl` (`hls/run_local.sh`). With WSL limited to 6 GB (`.wslconfig`), the
+  fully unrolled rf 1 projects ran out of memory during scheduling; `io_stream` and rf 32 run fine.
+
 ## Open questions (for 1/18)
 
-- `io_stream` (line buffer) as a fourth design point, closer to a real coprocessor interface?
+- Final numbers with Vitis / Vivado 2025.2.1, the same version as `make fmax`, so both sides use one tool version.
 - ASIC: does the Vitis HLS Verilog synthesize with DC in `asic/run_asic.sh` (no Xilinx primitives in a pure integer
   design?), so the comparison can be made in standard cells too?
 - Real 2:4 weights from the dental INT8 + 2:4 QAT checkpoint.
