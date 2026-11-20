@@ -20,6 +20,9 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
 - BlackParrot (University of Washington) is an open RV64 core that describes itself as a lightweight accelerator
   host: accelerators sit on its on-chip network, and its BedRock system can keep them cache-coherent with the cores.
   It sits further toward the loosely-coupled end than this project.
+- Celerity (UCSD, Cornell, UW and Michigan; TSMC 16 nm) is a tiered accelerator fabric: Linux-capable RISC-V
+  cores, a 496-core RISC-V manycore and a binarized neural network accelerator generated with high-level synthesis and
+  attached to a Rocket core as a custom coprocessor (RoCC). HammerBlade continues its manycore tier.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -92,6 +95,25 @@ Not taken: BedRock cache coherence, the on-chip network, multicore and Linux sup
 branch prediction. They do not fit a single-core design on a Basys3, and they would make the area and Fmax
 comparison harder to read.
 
+## Ideas taken from Celerity and HammerBlade
+
+Reviewed on 2026-11-20. Both are manycore chips, so again no RTL is used.
+
+1. **An HLS-generated accelerator attached to the core (from Celerity).** Celerity's neural network accelerator was
+   generated with HLS and attached to a core as a coprocessor. Here, the hls4ml `io_stream` design of the U-Net block
+   gets a memory-mapped or streaming wrapper and is attached to this core. That gives the middle point of the coupling
+   comparison (see Next steps) from a design that is already bit-exact, instead of a hand-written coprocessor.
+2. **Tiers mapped to parts of the workload (from Celerity).** Control, pre- and post-processing stay on the
+   programmable core, and the fixed, heavy convolution goes to the accelerator. This is the framing for when each
+   approach fits, above ("When a loosely-coupled accelerator is the better choice").
+3. **Scratchpads instead of caches (from HammerBlade).** The coprocessor's buffers are scratchpads the core writes
+   directly, like the core's own 8 KiB memory, so there is no DMA engine to build.
+4. **A reference for a pipelined core (from HammerBlade).** Its Vanilla-5 core is a small 5-stage RV32 core in
+   SystemVerilog; it is worth reading for forwarding and hazards if this core is pipelined later, not for copying.
+
+Not taken: the manycore arrays and their on-chip networks, the global address space with remote loads and stores,
+the manycore programming model and the Linux-capable cores.
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
@@ -109,9 +131,13 @@ comparison harder to read.
      an intrinsic.
 - A coupling comparison on the same U-Net block (`head.0.block.3`, real weights), with three points:
   1. tightly coupled: custom instructions in the core (`dot4`, `requant`);
-  2. loosely coupled: a small memory-mapped or streaming 3x3 convolution coprocessor with its own line buffer,
-     controlled by the core (not built yet);
-  3. standalone dataflow: the hls4ml `io_stream` design (`docs/hls4ml-baseline.md` on the `hls4ml` branch).
-  Each point is measured for cycles, LUT / FF / DSP and Fmax, and for how much of the network it can run without
-  new hardware. Planned for after January 2027.
+  2. loosely coupled: the same hls4ml `io_stream` design behind a memory-mapped or streaming wrapper, attached to
+     the core as a coprocessor with scratchpad buffers (not built yet);
+  3. standalone dataflow: the hls4ml `io_stream` design on its own (`docs/hls4ml-baseline.md` on the `hls4ml`
+     branch).
+  Points 2 and 3 use the same hls4ml design, so their difference is the cost of attaching it to a CPU (data movement
+  and control); points 1 and 2 compare custom instructions with a coprocessor. Each point is measured for cycles,
+  LUT / FF / DSP and Fmax, and for how much of the network it can run without new hardware. A hand-written 3x3
+  convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. Planned
+  for after January 2027; the UART bridge and control registers from the board test can be reused.
 - Gemmini in simulation (Chipyard) as a reference point for the loosely-coupled end.
