@@ -17,6 +17,9 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
 - Intel VNNI `vpdpbusd` uses the same u8 x s8 split as `dot4`.
 - Google's CFU Playground adds custom function units to a RISC-V core on Artix-7 FPGAs to speed up INT8 TFLite Micro
   models, close to this project's setup.
+- BlackParrot (University of Washington) is an open RV64 core that describes itself as a lightweight accelerator
+  host: accelerators sit on its on-chip network, and its BedRock system can keep them cache-coherent with the cores.
+  It sits further toward the loosely-coupled end than this project.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -62,6 +65,33 @@ In this project it also keeps every part of the design my own and small enough t
   on a core without a multiplier.
 - Max pooling is under 0.5% of the block, so `max4` is not worth its hardware.
 
+## Ideas taken from BlackParrot and ZynqParrot
+
+Reviewed on 2026-11-20. BlackParrot is far larger than this core (RV64, multicore, Linux, a coherent memory
+system), so none of its RTL is used. Four of its design habits fit this project:
+
+1. **Latency-insensitive interfaces to the functional units.** The core talks to `dot4`, `requant` and later units
+   through a valid / ready handshake instead of assuming a fixed one-cycle result. The first versions still answer in
+   one cycle, but a pipelined multiply-accumulate (for Fmax) or an INT4 or 2:4 unit can then replace a unit without
+   changing the pipeline.
+2. **Per-instruction comparison with the golden model from the start.** The `retire_*` ports and `RETIRE=1`
+   (`make trace`, `make random-test`) compare every retired instruction with `sw/iss.py`. They are used while
+   bringing up the core, not added at the end: a failing rv32ui test only says which test failed, while the retire
+   trace points at the first wrong instruction.
+3. **Configurations as parameters, not branches.** Whether the core has `dot4`, `requant` or the INT4 `dot8` is a
+   parameter in the core package, so `make fmax` and the ASIC flow build every configuration from one source tree
+   instead of from the `nnops` and `int4` branches.
+4. **One test program for simulation and the board (from ZynqParrot).** ZynqParrot runs the same C++ host program
+   against an RTL simulator and against a Zynq FPGA, and gates the clock of the design while the host is slow, so
+   that the design sees the same cycles in both. The Basys3 has no ARM core, so this project uses a UART bridge
+   instead: control and status registers (start, done, cycle count) and a data FIFO, a cycle counter that only counts
+   while the core runs, and one host program with a Verilator back end and a UART back end. The board test passes
+   when the U-Net block is bit-exact with the golden model and the cycle count matches simulation.
+
+Not taken: BedRock cache coherence, the on-chip network, multicore and Linux support, BlackParrot's front end and
+branch prediction. They do not fit a single-core design on a Basys3, and they would make the area and Fmax
+comparison harder to read.
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
@@ -77,6 +107,11 @@ In this project it also keeps every part of the design my own and small enough t
      compiler changes together.
   4. (Harder, later) recognizing the plain C byte-wise multiply-accumulate loop and turning it into `dot4` without
      an intrinsic.
-- A small memory-mapped 3x3 convolution coprocessor with its own line buffer, compared with `dot4` on the same layer,
-  to place the two approaches side by side with measured numbers.
+- A coupling comparison on the same U-Net block (`head.0.block.3`, real weights), with three points:
+  1. tightly coupled: custom instructions in the core (`dot4`, `requant`);
+  2. loosely coupled: a small memory-mapped or streaming 3x3 convolution coprocessor with its own line buffer,
+     controlled by the core (not built yet);
+  3. standalone dataflow: the hls4ml `io_stream` design (`docs/hls4ml-baseline.md` on the `hls4ml` branch).
+  Each point is measured for cycles, LUT / FF / DSP and Fmax, and for how much of the network it can run without
+  new hardware. Planned for after January 2027.
 - Gemmini in simulation (Chipyard) as a reference point for the loosely-coupled end.
