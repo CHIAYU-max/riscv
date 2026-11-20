@@ -273,7 +273,7 @@ by phase).
   convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. A
   per-layer cost model calibrated on these points extends them to latency and energy per panoramic X-ray and to a
   small design-space sweep under one final metric (see "Ideas taken from ReaLLM and Chiplet Cloud"). Planned
-  for after January 2027; the UART bridge and control registers from the board test can be reused.
+  for after May 2027; the UART bridge and control registers from the board test can be reused.
 - Gemmini in simulation (Chipyard, Verilator) as a reference point for the loosely-coupled end, run on the same
   convolution layer for cycle counts. Optional and only if a paper or the SOP needs it: the install is large (many GB
   and a conda environment, with 10 GB of memory in WSL), and it is not this project's own design.
