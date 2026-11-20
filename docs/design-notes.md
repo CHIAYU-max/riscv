@@ -269,6 +269,32 @@ Reviewed on 2026-11-20.
 Not taken: a full CGRA with its mapping compiler (scheduling and routing onto the array), which is research-level
 work, and building or embedding any FPGA fabric.
 
+## Ideas taken from OpenTitan
+
+Reviewed on 2026-11-20. OpenTitan is a silicon root of trust, so none of its hardware applies; its engineering
+methods do.
+
+1. **A testplan and coverage, not only passing tests.** Every OpenTitan block has a testplan that maps features to
+   tests, and coverage shows what was missed. Here, `docs/testplan.md` maps each instruction group, the `dot4` edge
+   cases and every register in the register table to rv32ui, the random tests or `dot4-test`, and Verilator's
+   `--coverage` reports line and toggle coverage of the core, listing what no test reaches.
+2. **Formal checks through RVFI (via Ibex).** OpenTitan's Ibex core supports the RISC-V Formal Interface (RVFI) from
+   YosysHQ's riscv-formal. The core's `retire_*` ports stay as they are; a wrapper maps internal signals to RVFI
+   (including rs1 / rs2 values and memory address and masks), and riscv-formal with SymbiYosys checks the core
+   against RV32I. How long the checks take on this core has to be tried. Random tests find bugs by sampling; formal
+   checks cover every input within their bound, so the two complement each other.
+3. **lowRISC's SystemVerilog style guide, with Verible.** New RTL follows its naming (`_i` / `_o` ports, `_d` / `_q`
+   for the next and current value of a register), and `make format` and a Verible lint run next to the Verilator
+   lint. Existing files are not renamed before the core is finished.
+4. **Register descriptions in the style of reggen.** OpenTitan's reggen turns an hjson register description into
+   SystemVerilog, a C header and documentation. reggen itself is tied to OpenTitan's TL-UL bus, so the register
+   table here uses a similar hjson format and its own small script, which also writes a markdown register map for
+   the README.
+
+Not taken: the security blocks (cryptography, key management, side-channel countermeasures) and secure boot, the
+TL-UL bus, the UVM environment (it needs a commercial simulator; the golden model and random tests cover this
+project's scale), and Ibex as the core (it is a reference to read, next to HammerBlade's Vanilla-5).
+
 ## Reused components
 
 Decided on 2026-11-20. The core and the custom-instruction units (`dot4`, `requant`, `max4`) are written from
