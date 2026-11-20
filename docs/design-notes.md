@@ -194,6 +194,35 @@ Reviewed on 2026-11-20. Both target LLM serving in the cloud, so only their meth
 Not taken: chiplet packaging, rack and server design, cloud serving, LLM-specific parts (KV cache, batching, token
 generation) and cost in money (energy or latency per X-ray fits an edge medical device better).
 
+## Ideas taken from Gemmini
+
+Reviewed on 2026-11-20. Gemmini itself stays an optional reference for the loosely-coupled end (Next steps); these
+details shape the coprocessor of the coupling comparison and the cost model.
+
+1. **Post-processing on the way out of the accumulator.** Gemmini's array only multiplies; scaling, ReLU and pooling
+   are applied while results are moved out, without going back to the CPU. The coprocessor does requant (the dental
+   fixed-point spec: 32-bit accumulator, 16-bit multiplier, one rounding) and ReLU on its read-out path. With `dot4`
+   alone, requant takes 35% of the block, so leaving it to the core would hide the coprocessor's gain; the hls4ml
+   design already folds it into a BatchNorm, so this also keeps the comparison fair.
+2. **Two scratchpads.** 8-bit inputs and weights in one, 32-bit partial sums in an accumulator memory, each with its
+   own address range in the register table.
+3. **Tiling computed from the hardware parameters.** Gemmini's C library picks tile sizes from the array and
+   scratchpad sizes (for example `tiled_conv_auto`). Here, one tiling function reads the hardware-parameter header
+   generated from the register table and splits U-Net layers larger than the 8 KiB memory into tiles that fit. The
+   per-layer cost model uses the same function, so estimated and measured runs tile the same way.
+4. **Counting what is not accelerated.** Speeding up the matrix multiply makes the rest the bottleneck (as I recall,
+   Gemmini added im2col and pooling hardware for this reason; not checked yet). The cost model and the comparison
+   table include the parts that stay on the core, as the profiling already does (requant 35%, `max4` under 0.5%).
+5. **A small parameterized systolic array (optional).** If the coprocessor is later hand-written, it can be a small
+   weight-stationary array (for example 4 x 4) instead of the 3 x 3 line-buffer design, so the array size becomes a
+   parameter of the design-space sweep and links to the dental project's 64 x 64 analytic model.
+6. **Overlapping data movement and compute (later).** As I recall, Gemmini has separate load, store and execute
+   controllers (not checked yet). The simplest version here is a double-buffered scratchpad, decided only after the
+   first coprocessor shows how much data movement costs.
+
+Not taken: Chipyard integration, TileLink DMA, virtual memory and the TLB, the ONNX Runtime port, Gemmini's Spike
+functional model (the golden model does this).
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
