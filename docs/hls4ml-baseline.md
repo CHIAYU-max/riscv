@@ -130,6 +130,10 @@ All four bit-exact in C simulation and pass co-simulation.
 - Vitis 2025.2.1 is installed in WSL (`/Xilinx/2025.2.1`, the version `make fmax` uses): run it with
   `vitis-run --mode hls --tcl build_prj.tcl` (`hls/run_local.sh`). With WSL limited to 6 GB (`.wslconfig`), the
   fully unrolled rf 1 projects ran out of memory during scheduling; `io_stream` and rf 32 run fine.
+- rf 1 with Vitis HLS 2025.2.1 (2026-11-19 22:30, WSL at 10 GB): C simulation bit-exact, but the scheduler was
+  still on `PartitionLoop` after 12 hours (one core at 100%, 1.3 GB resident; memory was not the limit). With the
+  input partition applied, the fully unrolled 2,304-multiplier loop is more than the scheduler handles in
+  reasonable time, so rf 1 stays at the 2020.2 numbers (marked as limited by the ignored partition).
 
 ## Open questions (for 1/18)
 
