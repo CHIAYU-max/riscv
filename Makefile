@@ -18,11 +18,13 @@
 # make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
 # make bit P=demo [BOARD=basys3] [MHZ=25] [MEM_KIB=8]   Vivado bitstream with program P in memory;
 #                BOARD = basys3 or nexys_a7 (fpga/boards.tcl, docs/nexys-a7.md)
-#                (source Vivado's settings64.sh first; output in build/fpga/<board>/)
+#                (output in build/fpga/<board>/; Vivado from PATH, else /Xilinx/2025.2.1, see VIVADO below)
 # make fmax P=demo [BOARD=basys3] [FMAX_MHZ=50] [MEM_KIB=8] [CORE=...]   place and route, report Fmax and
-#                the core's LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/<board>/)
+#                the core's LUT / FF / DSP (no bitstream; output in build/fmax/<board>/)
 #                bit and fmax also take CORE=<files> (default: the core in rtl/) and HEX=<image> (default: program P)
-# make prog [BOARD=basys3]      program the board over JTAG with the bitstream from make bit
+# make prog [BOARD=basys3]      program the board over JTAG with the bitstream from make bit; attaches the
+#                board's USB to WSL first if needed (fpga/attach_usb.sh). Build and program in one go:
+#                make bit prog P=demo BOARD=nexys_a7
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
 # make sim       top_processor demo, Icarus Verilog
 # make lint [WIP=1]  Verilator lint of the core sources (rtl/*.sv and rtl/*.v); WIP=1 hides unused-signal and
@@ -59,7 +61,9 @@ C_HEX    := $(addprefix build/c/,$(addsuffix .hex,$(C_PROGS)))
 MHZ      ?= 25
 BOARD    ?= basys3
 MEM_KIB  ?= 8
-VIVADO   ?= vivado
+# Vivado: the one in PATH (after sourcing settings64.sh), else the WSL install; bin/vivado sets up its own
+# environment, so sourcing is not needed for bit / fmax / prog
+VIVADO   ?= $(or $(shell command -v vivado 2>/dev/null),/Xilinx/2025.2.1/Vivado/bin/vivado)
 
 test: build/sim_core $(TEST_HEX)
 	sw/run_tests.sh build/sim_core $(TEST_HEX)
@@ -92,11 +96,13 @@ fmax: $(BIT_HEX)
 	$(VIVADO) -mode batch -nojournal -log build/fmax.log -source fpga/fmax.tcl \
 	    -tclargs $(BOARD) $(BIT_HEX) $(FMAX_MHZ) $(MEM_KIB) $(CORE) | grep FMAX_DONE
 
-# Program the board over JTAG with build/fpga/<board>/<top>.bit (from make bit). From WSL, attach the board's
-# USB first (Windows, once per plug-in: usbipd attach --wsl --busid <id>; see docs/nexys-a7.md).
+# Program the board over JTAG with build/fpga/<board>/<top>.bit (from make bit). In WSL the board's USB is
+# attached with usbipd-win first if it is not visible (the one-time usbipd bind is manual; docs/nexys-a7.md).
 prog:
+	@if grep -qi microsoft /proc/version 2>/dev/null; then bash fpga/attach_usb.sh; fi
 	$(VIVADO) -mode batch -nojournal -log build/program.log -source fpga/program.tcl \
-	    -tclargs $(BOARD) | grep -E 'PROGRAM_DONE|ERROR'
+	    -tclargs $(BOARD) > build/program.out 2>&1 || true
+	@grep -E '^(PROGRAM_DONE|PROGRAM_ERROR|ERROR)' build/program.out; grep -q '^PROGRAM_DONE' build/program.out
 
 progress: $(if $(PLAN),,build/sim_core) $(TEST_HEX)
 	@python3 sw/progress.py $(if $(PLAN),,--sim build/sim_core) $(TEST_HEX)

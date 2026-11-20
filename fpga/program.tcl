@@ -4,14 +4,15 @@
 source fpga/boards.tcl
 set board [lindex $argv 0]
 set bit   build/fpga/$board/[board_get $board top].bit
-if {![file exists $bit]} { error "$bit not found: run make bit BOARD=$board first" }
+proc fail {msg} { puts "PROGRAM_ERROR $msg"; exit 1 }
+if {![file exists $bit]} { fail "$bit not found: run make bit BOARD=$board first" }
 
 open_hw_manager
 connect_hw_server
 open_hw_target
 set dev [lindex [get_hw_devices [board_get $board dev]*] 0]
 if {$dev eq ""} {
-    error "no [board_get $board dev] on the JTAG chain (found: [get_hw_devices]); wrong board or BOARD?"
+    fail "no [board_get $board dev] on the JTAG chain (found: [get_hw_devices]); wrong board or BOARD?"
 }
 current_hw_device $dev
 set_property PROGRAM.FILE $bit $dev

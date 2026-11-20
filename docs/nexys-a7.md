@@ -93,10 +93,19 @@ shows the TOHOST value: `00000001` pass, `00000003` the memory image is not the 
 `0x00000013`; any other program, such as `demo`, gives 3), `00000005` byte-lane error.
 
 **Programming from WSL.** Vivado runs in WSL, so the board's USB (FTDI `0403:6010`) has to be passed to WSL with
-usbipd-win. In Windows: `usbipd list` to find the bus id, `usbipd bind --busid <id>` once (administrator
-PowerShell), then `usbipd attach --wsl --busid <id>` after every plug-in (no administrator needed). The Digilent
-udev rules from Vivado's `install_drivers` are already in WSL. `usbipd detach --busid <id>` gives the board back to
-Windows. The bitstream goes into the FPGA's configuration memory only: it is lost at power-off and the flash is not
+usbipd-win. Once per board, in an administrator PowerShell: `usbipd list` to find the bus id, then
+`usbipd bind --busid <id>`. After that `make prog` attaches the board by itself when WSL cannot see it
+(`fpga/attach_usb.sh` runs `usbipd.exe attach --wsl --hardware-id 0403:6010` from WSL; no administrator needed), so
+building and programming is one command, without sourcing `settings64.sh` (the Makefile falls back to
+`/Xilinx/2025.2.1/Vivado/bin/vivado`):
+
+```bash
+make bit prog P=demo BOARD=nexys_a7
+```
+
+`make prog` fails with `PROGRAM_ERROR` if the FPGA on the cable is not the one `BOARD` names. The Digilent udev
+rules from Vivado's `install_drivers` are already in WSL. `usbipd detach --busid <id>` (Windows) gives the board
+back to Windows. The bitstream goes into the FPGA's configuration memory only: it is lost at power-off and the flash is not
 touched.
 
 ## Acceptance
