@@ -249,7 +249,7 @@ the UART bridge:
    calibrated from these board counts instead of from golden-model estimates only.
 3. **A DRAM latency model (after FASED, later).** A configurable delay in the bus transducer emulates weights held in
    DRAM, so the three coupling points can be compared with weights on chip and in DRAM, which links to the on-chip
-   capacity question for 2:4.
+   capacity question for 2:4. On the ZedBoard the delay can be checked against the real DDR3 (PS, HP ports).
 
 Not taken: cloud FPGAs, Chisel / FIRRTL and the Golden Gate compiler (the core is SystemVerilog, and the gated clock
 already does the decoupling), datacenter network simulation, Linux, FirePerf (the golden model already profiles
@@ -364,8 +364,11 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
   Points 2 and 3 use the same hls4ml design, so their difference is the cost of attaching it to a CPU (data movement
   and control); points 1 and 2 compare custom instructions with a coprocessor. Each point is measured for cycles,
   LUT / FF / DSP and Fmax, for how much of the network it can run without new hardware, and, for points 1 and 2
-  through the ASIC flow, for energy per MAC (PrimePower). A hand-written 3x3
-  convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. A
+  through the ASIC flow, for energy per MAC (PrimePower). The hand-written
+  coprocessor (decided 2026-11-21, after May, on the ZedBoard) is a small weight-stationary INT8 array (for example
+  8 x 8) that stores 2:4 weights with their metadata in its own buffer and skips the zeros, reading whole layers
+  from DDR3: it compares hand-written RTL with HLS, and it is the first design here where 2:4 can pay off, joining
+  the dental project's INT8 + 2:4 accelerator candidate. A
   per-layer cost model calibrated on these points extends them to latency and energy per panoramic X-ray and to a
   small design-space sweep under one final metric (see "Ideas taken from ReaLLM and Chiplet Cloud"). Planned
   for after May 2027; the UART bridge and control registers from the board test can be reused.

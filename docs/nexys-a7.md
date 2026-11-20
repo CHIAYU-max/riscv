@@ -179,6 +179,33 @@ What it adds is the host and the DRAM path, which is what the accelerator work n
 - **DRAM without MIG.** A coprocessor or the hls4ml design can stream whole layers from DDR3 through the HP ports,
   which is what "limited to small tiles" in the design notes was about.
 
+**Image data flow.** Whole images and whole layers need DRAM on either board, but capacity is not what decides it:
+
+| Data | Size | Fits on chip (about 600 KB of block RAM)? |
+| --- | ---: | --- |
+| Raw panoramic X-ray (about 3000 x 1500, 8-bit) | about 4.5 MB | no |
+| U-Net input, 512 x 512 | 256 KB | barely |
+| One `head.0.block.3` feature map (512 x 512 x 32, INT8) | 8 MiB (16 MiB in + out) | no |
+| INT8 weights of the whole U-Net | several MB to about 20 MB (depends on the encoder) | no |
+
+128 MiB would hold all of it. The difference is how the data gets in and out:
+
+| | Nexys A7 | ZedBoard |
+| --- | --- | --- |
+| Image in | from the PC over the UART (512 x 512: about 23 s at 115200 baud, a few seconds at a few Mbaud), or a hand-written microSD controller and FAT reader | the ARM reads it from the SD card or the network with existing libraries (bare metal or Linux) |
+| DRAM | MIG in the logic, plus an AXI port or DMA of my own | already on the PS; the logic reads and writes it through the HP AXI ports |
+| Preprocessing (resize, normalize) | on the PC, or slowly on the RISC-V core | C on the ARM |
+| Results | back to the PC over the UART | checked against the golden model and saved by the ARM |
+
+Bandwidth is not the limit either: the core and the hls4ml `io_stream` design take about one byte per cycle, about
+100 MB/s at 100 MHz, far below what either DRAM delivers. So image-level work (whole images, whole layers, the whole
+U-Net) goes to the ZedBoard; the Nexys A7 work before 12/20 uses small tiles in the 32 KiB memory and needs no images.
+
+**Data rule for board work** (set by 佳祐, 2026-11-21): dental images and the weights trained on them may be used
+locally, on the PC and on the boards (including an SD card in the board), but are never uploaded to the internet
+(not to this repository, GitHub or any online service) and never used commercially. In the repository they live only
+under `build/`, which Git ignores, like `build/unet/` today. Clear the SD card before a borrowed board is returned.
+
 Why the core and the custom instructions stay on the Nexys A7: what limited the instruction designs so far was the
 instruction format and the core, not the FPGA size. `dot4` is four lanes because a register is 32 bits and an
 R-type instruction reads two registers; the 2:4 `dot4` was dropped because it needs three or more source operands;
@@ -191,6 +218,51 @@ separate build script (not just a row in `fpga/boards.tcl`), and an ARM program 
 is. 8 switches, 8 LEDs, no 7-segment display (as far as I know; check the reference manual), so results are read by
 the ARM. Fmax on the Zynq PL is a separate column.
 
-Plan: no ZedBoard work before the 12/20 milestone. When the board is here, one bring-up session (PS + PL, the ARM
-reads and writes one register in `soc.v`) decides whether the 2/20 sessions (register table, host interface, gated
-cycle counter) are built on the ZedBoard with AXI-Lite instead of a UART on the Nexys A7.
+Plan (2026-11-21):
+
+- No ZedBoard work before the 12/20 milestone.
+- 2/20: bring-up (PS + PL, the ARM reads and writes one register in `soc.v`), then decide whether the host
+  interface of 2/27 and 3/6 is AXI-Lite on the ZedBoard or a UART on the Nexys A7. With AXI-Lite there is no UART
+  bridge to write (Xilinx IP), so the dates stay.
+- 3/21 milestone: the real weights bit-exact on the board, now with a real input tile (the layer's input
+  activations exported from a real image; data rule above). Stretch, on the ZedBoard: the whole layer at full
+  resolution, the image read from the SD card into DDR3.
+- After May: the hand-written coprocessor of the coupling comparison is a small INT8 array that skips 2:4 zeros
+  (design notes, "Next steps"), on the ZedBoard with DDR3. This also takes over the on-hold CNN FPGA accelerator
+  project, whose open question was the board (PYNQ-Z2, the same XC7Z020, or KV260).
+- Dropped: a Verilator + DRAMSim3 / Ramulator2 DRAM model. Those are simulators on the PC and would run with any
+  board; they are dropped because real DDR3 timing can be measured on the ZedBoard and the bandwidth / latency
+  sweeps are already planned with a parameterized memory port in the testbench.
+
+**How long one whole layer takes** (`head.0.block.3` at 512 x 512: 512 x 512 x 32 x 32 x 9 = about 2.4 G MACs),
+from the measured tile numbers; the core clock is an assumption until the core's Fmax is measured:
+
+| Design | MACs per cycle (tile numbers) | Clock | One layer |
+| --- | ---: | ---: | ---: |
+| core + `block_nn` | 36,864 / 78,503 = 0.47 | 50 MHz (assumed) | about 100 s |
+| core + `block_rb` | 36,864 / 33,324 = 1.1 | 50 MHz (assumed) | about 44 s |
+| hls4ml `io_stream` rf 32, 8 of 32 output channels (4 passes) | 36,864 / about 1,500 = 25 | 100 MHz | about 1 s |
+| hls4ml `io_stream` rf 32, all 32 output channels | 147,456 / about 1,500 = 98 | 100 MHz | about 0.25 s |
+
+The 32-channel design fits both boards (Nexys A7: 16,365 LUT, all 240 DSPs; ZedBoard: 17,911 LUT, all 220 DSPs;
+rf 72 leaves about 90 / 70 DSPs at about 0.5 s); bit-exact in RTL co-simulation, Vitis HLS 2020.2. Details and the
+Vitis HLS 2025.2.1 `io_stream` fault: `docs/hls4ml-baseline.md` on the `hls4ml` branch.
+
+Measuring that gap on the board is the direct case for a coprocessor.
+
+## Clock limits
+
+Digilent describes the Nexys A7 as having "internal clock speeds exceeding 450 MHz". That is the limit of the
+part's clock network, not a speed the design can run at. Checked 2026-11-21 with Vivado 2025.2.1 on
+`xc7a100tcsg324-1` (the stand-in design built for 400 MHz, `report_pulse_width`):
+
+| Primitive | Minimum period | Maximum frequency |
+| --- | ---: | ---: |
+| BUFG (global clock buffer) | 2.155 ns | 464 MHz |
+| MMCM input / feedback | 1.249 ns | 800 MHz |
+
+At 400 MHz even the stand-in core (a few registers in front of the 32 KiB distributed RAM) misses timing by
+1.18 ns, so about 270 MHz is the limit for a path that is one memory read. A single-cycle core does a memory read,
+decode, register read, ALU and a second memory read in one cycle, so its Fmax will be far lower (tens of MHz;
+measured once the core exists). Higher clocks need pipelining, not a faster board; the 100 MHz on the board is
+only the oscillator, which the MMCM multiplies.
