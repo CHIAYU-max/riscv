@@ -32,6 +32,10 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
   two-phase hardware / software design-space search judged on one metric, total cost of ownership per generated
   token. ReaLLM, from the same group, is a simulation framework that links accelerator-level detail to system-level
   LLM serving performance.
+- PRGA (Princeton) generates custom FPGA fabrics; the CIFER chip used it for an embedded FPGA attached to OpenPiton's
+  P-Mesh as a reconfigurable accelerator. CGRAs (coarse-grained reconfigurable arrays) sit between FPGAs and fixed
+  accelerators: arrays of word-level processing elements whose functions and connections are set by configuration
+  registers (for example Cornell's UE-CGRA and Stanford's Canal interconnect generator).
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -244,6 +248,26 @@ the UART bridge:
 Not taken: cloud FPGAs, Chisel / FIRRTL and the Golden Gate compiler (the core is SystemVerilog, and the gated clock
 already does the decoupling), datacenter network simulation, Linux, FirePerf (the golden model already profiles
 by phase).
+
+## Ideas taken from PRGA and CGRAs
+
+Reviewed on 2026-11-20.
+
+- **PRGA: not taken.** The Basys3 already is an FPGA, so an FPGA fabric inside it adds nothing, and an embedded FPGA
+  in the ASIC flow costs far more area than the accelerator it would host. It only marks the most flexible end of the
+  reconfigurability range in related work.
+- **Configurable processing elements (from CGRAs, optional).** The coprocessor's processing elements get a few modes
+  set by configuration registers (multiply-accumulate, maximum, requant with ReLU), so one coprocessor runs
+  convolution, pooling and requantization without separate hardware for each. The configuration registers are rows in
+  the register table. This improves the "how much of the network runs without new hardware" column, and it is an
+  optional variant next to the small systolic array.
+- **A second axis for the comparison.** The coupling comparison then has two axes, how tightly the accelerator is
+  coupled to the core and whether it can be reconfigured: the fixed hls4ml design, a fixed coprocessor, a
+  configurable coprocessor and the custom instructions in the core. The question becomes how much flexibility pays
+  off for edge inference on medical images.
+
+Not taken: a full CGRA with its mapping compiler (scheduling and routing onto the array), which is research-level
+work, and building or embedding any FPGA fabric.
 
 ## Reused components
 
