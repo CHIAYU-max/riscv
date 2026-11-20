@@ -23,6 +23,9 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
 - Celerity (UCSD, Cornell, UW and Michigan; TSMC 16 nm) is a tiered accelerator fabric: Linux-capable RISC-V
   cores, a 496-core RISC-V manycore and a binarized neural network accelerator generated with high-level synthesis and
   attached to a Rocket core as a custom coprocessor (RoCC). HammerBlade continues its manycore tier.
+- OpenPiton (Princeton) is an open manycore research platform with the P-Mesh coherent cache system. Its BYOC
+  framework connects any core or accelerator through one narrow handshaked interface (the Transaction-Response
+  Interface) and a small per-core transducer.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -114,6 +117,30 @@ Reviewed on 2026-11-20. Both are manycore chips, so again no RTL is used.
 Not taken: the manycore arrays and their on-chip networks, the global address space with remote loads and stores,
 the manycore programming model and the Linux-capable cores.
 
+## Ideas taken from OpenPiton
+
+Reviewed on 2026-11-20. No RTL is used.
+
+1. **Energy per instruction.** The Piton chip was characterized for power and energy, down to individual
+   instructions (as I recall from the OpenPiton group's HPCA 2018 paper, not checked yet). Here, PrimePower in the
+   ASIC flow (`asic/run_asic.sh`) measures post-layout energy for one `dot4` against the base instruction sequence it
+   replaces, and for the whole U-Net block. The coupling comparison then reports energy per MAC as well as cycles and
+   area. Only the ASIC flow gives this number; FPGA power estimates for the hls4ml designs are not accurate enough to
+   put next to it.
+2. **One handshaked interface plus small transducers, outside the core (from BYOC).** The core's own memory port
+   stays as it is (a single-cycle core would need stall logic for a handshake). The bus outside the core uses one
+   request / response handshake, and the BRAM, the UART bridge for the board test and later the hls4ml coprocessor
+   each get a small transducer to it, so attaching the coprocessor does not mean rebuilding the bus. This is the
+   memory-side counterpart of the valid / ready interfaces to the functional units.
+3. **A data-supply unit decoupled from compute (as I recall from MAPLE, Princeton's decoupled access engine on
+   OpenPiton, not checked yet).** A small unit that fetches `dot4` operands ahead of time would remove the two loads
+   in front of each `dot4` (see "Limits of the instruction-extension approach"). An untested idea, to compare with the
+   accumulating `dot4` and post-increment loads.
+
+Not taken: the P-Mesh coherence system and its on-chip networks, the manycore, the OpenSPARC and Ariane cores, Linux,
+heterogeneous-ISA support, and OpenPiton's test infrastructure (this project already has the golden model, random
+tests and CI).
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
@@ -137,7 +164,8 @@ the manycore programming model and the Linux-capable cores.
      branch).
   Points 2 and 3 use the same hls4ml design, so their difference is the cost of attaching it to a CPU (data movement
   and control); points 1 and 2 compare custom instructions with a coprocessor. Each point is measured for cycles,
-  LUT / FF / DSP and Fmax, and for how much of the network it can run without new hardware. A hand-written 3x3
+  LUT / FF / DSP and Fmax, for how much of the network it can run without new hardware, and, for points 1 and 2
+  through the ASIC flow, for energy per MAC (PrimePower). A hand-written 3x3
   convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. Planned
   for after January 2027; the UART bridge and control registers from the board test can be reused.
 - Gemmini in simulation (Chipyard) as a reference point for the loosely-coupled end.
