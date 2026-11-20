@@ -223,6 +223,28 @@ details shape the coprocessor of the coupling comparison and the cost model.
 Not taken: Chipyard integration, TileLink DMA, virtual memory and the TLB, the ONNX Runtime port, Gemmini's Spike
 functional model (the golden model does this).
 
+## Ideas taken from FireSim
+
+Reviewed on 2026-11-20. FireSim's main idea, target cycles that do not depend on the host, is already taken from
+ZynqParrot (the gated cycle counter). Its on-FPGA instrumentation adds three ideas, built on the register table and
+the UART bridge:
+
+1. **A retire signature on the board (after TracerV).** TracerV streams the instruction trace out of the FPGA. The
+   UART is too slow for a full trace, so the board instead folds every retired write-back value into a signature (for
+   example a CRC) that is read out at the end and compared with the one the golden model computes. A bit-exact output
+   does not prove that every instruction was right; the signature also catches errors that only appear on the FPGA,
+   such as BRAM initialization or timing problems.
+2. **Event counters (after AutoCounter).** Besides the cycle counter: `dot4` instructions executed, loads and
+   stores, and cycles spent waiting on the bus handshake, each a row in the register table. The per-layer cost model is
+   calibrated from these board counts instead of from golden-model estimates only.
+3. **A DRAM latency model (after FASED, later).** A configurable delay in the bus transducer emulates weights held in
+   DRAM, so the three coupling points can be compared with weights on chip and in DRAM, which links to the on-chip
+   capacity question for 2:4.
+
+Not taken: cloud FPGAs, Chisel / FIRRTL and the Golden Gate compiler (the core is SystemVerilog, and the gated clock
+already does the decoupling), datacenter network simulation, Linux, FirePerf (the golden model already profiles
+by phase).
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
