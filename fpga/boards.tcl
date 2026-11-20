@@ -2,9 +2,10 @@
 # Add a board here, with its top level in fpga/rtl/<board>_top.v and its pins in fpga/<board>.xdc.
 #   basys3    Digilent Basys3        XC7A35T-1CPG236C
 #   nexys_a7  Digilent Nexys A7-100T XC7A100T-1CSG324C (docs/nexys-a7.md)
+# dev is the JTAG device name prefix that program.tcl looks for.
 set boards {
-    basys3   {part xc7a35tcpg236-1  top basys3_top   xdc fpga/basys3.xdc}
-    nexys_a7 {part xc7a100tcsg324-1 top nexys_a7_top xdc fpga/nexys_a7.xdc}
+    basys3   {part xc7a35tcpg236-1  dev xc7a35t  top basys3_top   xdc fpga/basys3.xdc}
+    nexys_a7 {part xc7a100tcsg324-1 dev xc7a100t top nexys_a7_top xdc fpga/nexys_a7.xdc}
 }
 
 proc board_get {board key} {

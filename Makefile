@@ -21,6 +21,8 @@
 #                (source Vivado's settings64.sh first; output in build/fpga/<board>/)
 # make fmax P=demo [BOARD=basys3] [FMAX_MHZ=50] [MEM_KIB=8] [CORE=...]   place and route, report Fmax and
 #                the core's LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/<board>/)
+#                bit and fmax also take CORE=<files> (default: the core in rtl/) and HEX=<image> (default: program P)
+# make prog [BOARD=basys3]      program the board over JTAG with the bitstream from make bit
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
 # make sim       top_processor demo, Icarus Verilog
 # make lint [WIP=1]  Verilator lint of the core sources (rtl/*.sv and rtl/*.v); WIP=1 hides unused-signal and
@@ -77,16 +79,24 @@ build/c/%.hex: build/c/%.elf
 	python3 sw/bin2hex.py $(@:.hex=.bin) $@
 	$(OBJDUMP) -d $< > $(@:.hex=.dump)
 
-bit: build/c/$(P).hex
+# CORE overrides the core sources, e.g. CORE=tb/selftest_core.v to check the scripts without rv32i_core.v
+# HEX overrides the memory image, e.g. HEX=tb/selftest.hex (what the stand-in core expects at address 0)
+CORE    ?= $(CORE_RTL)
+BIT_HEX  = $(or $(HEX),build/c/$(P).hex)
+bit: $(BIT_HEX)
 	$(VIVADO) -mode batch -nojournal -log build/fpga_build.log -source fpga/build.tcl \
-	    -tclargs $(BOARD) build/c/$(P).hex $(MHZ) $(MEM_KIB) $(CORE_RTL)
+	    -tclargs $(BOARD) $(BIT_HEX) $(MHZ) $(MEM_KIB) $(CORE)
 
-# CORE overrides the core sources, e.g. CORE=tb/selftest_core.v to check the script without rv32i_core.v
-CORE ?= $(CORE_RTL)
 FMAX_MHZ ?= 50
-fmax: build/c/$(P).hex
+fmax: $(BIT_HEX)
 	$(VIVADO) -mode batch -nojournal -log build/fmax.log -source fpga/fmax.tcl \
-	    -tclargs $(BOARD) build/c/$(P).hex $(FMAX_MHZ) $(MEM_KIB) $(CORE) | grep FMAX_DONE
+	    -tclargs $(BOARD) $(BIT_HEX) $(FMAX_MHZ) $(MEM_KIB) $(CORE) | grep FMAX_DONE
+
+# Program the board over JTAG with build/fpga/<board>/<top>.bit (from make bit). From WSL, attach the board's
+# USB first (Windows, once per plug-in: usbipd attach --wsl --busid <id>; see docs/nexys-a7.md).
+prog:
+	$(VIVADO) -mode batch -nojournal -log build/program.log -source fpga/program.tcl \
+	    -tclargs $(BOARD) | grep -E 'PROGRAM_DONE|ERROR'
 
 progress: $(if $(PLAN),,build/sim_core) $(TEST_HEX)
 	@python3 sw/progress.py $(if $(PLAN),,--sim build/sim_core) $(TEST_HEX)
@@ -253,5 +263,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: FORCE lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax selftest xsim sim clean
+.PHONY: FORCE lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax prog selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf

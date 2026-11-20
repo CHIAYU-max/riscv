@@ -84,14 +84,25 @@ make bit  P=demo BOARD=nexys_a7                 # build/fpga/nexys_a7/nexys_a7_t
 make bit  P=demo BOARD=nexys_a7 MEM_KIB=32
 make fmax P=demo BOARD=nexys_a7                 # build/fmax/nexys_a7/
 make bit  P=demo                                # Basys3, as before (output now in build/fpga/basys3/)
+make prog BOARD=nexys_a7                        # JTAG, the bitstream of the last make bit for that board
 ```
 
-Before the core exists, add `CORE_RTL=tb/selftest_core.v` (`bit`) or `CORE=tb/selftest_core.v` (`fmax`) to check
-the scripts. Program the board with the Vivado Hardware Manager, as for the Basys3.
+Before the core exists, check the board with the stand-in core and the image it expects:
+`make bit BOARD=nexys_a7 CORE=tb/selftest_core.v HEX=tb/selftest.hex`, then `make prog BOARD=nexys_a7`. The display
+shows the TOHOST value: `00000001` pass, `00000003` the memory image is not the expected one (word 0 must be
+`0x00000013`; any other program, such as `demo`, gives 3), `00000005` byte-lane error.
+
+**Programming from WSL.** Vivado runs in WSL, so the board's USB (FTDI `0403:6010`) has to be passed to WSL with
+usbipd-win. In Windows: `usbipd list` to find the bus id, `usbipd bind --busid <id>` once (administrator
+PowerShell), then `usbipd attach --wsl --busid <id>` after every plug-in (no administrator needed). The Digilent
+udev rules from Vivado's `install_drivers` are already in WSL. `usbipd detach --busid <id>` gives the board back to
+Windows. The bitstream goes into the FPGA's configuration memory only: it is lost at power-off and the flash is not
+touched.
 
 ## Acceptance
 
-1. `make bit` builds for both boards with the stand-in core and with the real core, timing met at 25 MHz.
+1. `make bit` builds for both boards with the stand-in core and with the real core, timing met at 25 MHz
+   (stand-in core: done, and `00000001` on the Nexys A7, 2026-11-21).
 2. `demo` on the Nexys A7: fib(`SW[4:0]`) on the display (8 digits, upper 4 zero), counter on the LEDs,
    CPU_RESETN restarts it.
 3. Once the UART bridge exists: `block_nn` gives the same output and the same cycle count on both boards and in
@@ -106,7 +117,14 @@ the scripts. Program the board with the Vivado Hardware Manager, as for the Basy
 
 **Script check with the stand-in core** (`tb/selftest_core.v`, program `demo`): `make bit` passes for the Basys3
 (the refactored `basys3_top`, WNS +33.6 ns at 25 MHz), the Nexys A7 with `MEM_KIB=8` and with `MEM_KIB=32`
-(WNS +34.0 ns), no critical warnings. Not yet checked on the board.
+(WNS +34.0 ns), no critical warnings.
+
+**On the board (2026-11-21).** Nexys A7-100T, programmed from WSL with `make prog` (JTAG target found, device
+`xc7a100t_0`). With `CORE=tb/selftest_core.v HEX=tb/selftest.hex` and `MEM_KIB=8`: the display shows `00000001`
+(pass) on 8 digits and LED15 is on. This checks the clock and MMCM, the CPU_RESETN polarity, the memory image loaded
+at configuration, byte-lane stores, the TOHOST latch, the LED pin and the 8-digit scan. A first try with the `demo`
+image showed `00000003`, as expected (the stand-in core needs `tb/selftest.hex` at address 0). Switches, the other
+15 LEDs and `MEM_KIB=32` on the board are checked once the real core runs `demo`.
 
 **Memory cost.** The stand-in core reads only two addresses, so Vivado trims the memory to 128 LUTs. To measure the
 whole memory, a throwaway core that sweeps both ports over every address (not in the repository) was run through

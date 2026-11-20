@@ -103,6 +103,7 @@ make c-one P=fib VCD=1     # one program; disassembly in build/c/fib.dump
 source /Xilinx/2025.2.1/Vivado/settings64.sh
 make bit P=demo            # build/fpga/basys3/basys3_top.bit, timing in build/fpga/basys3/timing.rpt
 make bit P=demo MHZ=50     # core clock from the MMCM: 25 (default) or 50 MHz
+make prog                  # program the board over JTAG (from WSL: attach the USB with usbipd, docs/nexys-a7.md)
 ```
 
 `demo.c` shows fib(`SW[4:0]`) in hex on the display and a counter on the LEDs. BTNC is reset.
