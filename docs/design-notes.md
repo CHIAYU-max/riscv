@@ -245,6 +245,17 @@ Not taken: cloud FPGAs, Chisel / FIRRTL and the Golden Gate compiler (the core i
 already does the decoupling), datacenter network simulation, Linux, FirePerf (the golden model already profiles
 by phase).
 
+## Reused components
+
+Decided on 2026-11-20. The core and the custom-instruction units (`dot4`, `requant`, `max4`) are written from
+scratch. Infrastructure outside the core may reuse BaseJump STL (Bespoke Silicon Group, Solderpad Hardware License
+0.51), pinned as a git submodule: FIFOs for the UART bridge, counters for the cycle and event counters, an arbiter
+for the bus outside the core, and later synchronous memories for the coprocessor's scratchpads. Its modules follow
+the same valid / ready and valid / yumi handshakes as this project's interfaces. Checked on 2026-11-20 with
+`bsg_fifo_1r1w_small`, `bsg_round_robin_arb` and `bsg_counter_clear_up`: Verilator 5.020 lints them cleanly, and
+Icarus Verilog 12 compiles and simulates them with `-gno-assertions` (it does not support their deferred
+assertions). Not used: the network-on-chip, cache, DRAM controller, links and process-specific hardened memories.
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
