@@ -114,6 +114,27 @@ All four bit-exact in C simulation and pass co-simulation.
 - Against `block_nn` (78,503 instructions): about 52x fewer cycles for `io_stream` rf 32 and 14x for rf 144, for
   one layer shape with the weights built in.
 
+### `io_stream` with Vitis HLS / Vivado 2025.2.1 (2026-11-20, local WSL, the version `make fmax` uses)
+
+These are the numbers to compare with the core.
+
+| Design | LUT | FF | DSP | BRAM tiles | Latency (cycles) | WNS at 10 ns | Fmax estimate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `io_stream`, rf 32 | 11,476 (55%) | 9,929 (24%) | 8 | 13 | 1,487 - 1,513 | +1.33 ns | ~115 MHz |
+| `io_stream`, rf 144 | 6,608 (32%) | 8,461 (20%) | 4 | 7 | 5,337 - 5,473 | +0.37 ns | ~104 MHz |
+| 2:4, `io_stream`, rf 32 | 11,620 (56%) | 10,002 (24%) | 8 | 13 | 1,487 - 1,513 | +1.33 ns | ~115 MHz |
+| 2:4, `io_stream`, rf 144 | 6,750 (32%) | 8,534 (21%) | 4 | 7 | 5,337 - 5,473 | +0.37 ns | ~104 MHz |
+
+All four bit-exact in C simulation (32 of 32) and pass co-simulation.
+
+- **2025.2.1 builds the 8-bit multipliers from LUTs instead of DSPs**: rf 32 goes from 75 DSP / 3,945 LUT (2020.2)
+  to 8 DSP / 11,476 LUT, with the same latency. Which one to report depends on how the core's `dot4` is mapped;
+  forcing DSPs (`config_op mul -impl dsp` or a `BIND_OP` pragma) would make the two comparable either way.
+- **2:4 gives nothing with `io_stream`** (+1-2% LUT): the weights are read from arrays, so a zero weight costs the
+  same as any other. Real 2:4 QAT weights would not change that; only a fully unrolled design (or hardware that
+  stores and skips the zeros) gains from sparsity.
+- Latency is the same as with 2020.2, so the 2020.2 cycle counts above hold.
+
 ## Notes on the tools
 
 - Vitis HLS 2020.2 (on SOC) is older than what hls4ml 1.3.0 targets; `config_array_partition -maximum_size` is not
