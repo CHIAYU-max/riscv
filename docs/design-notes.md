@@ -28,6 +28,10 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
   Interface) and a small per-core transducer.
 - Chipyard (Berkeley) is a Chisel SoC generator with Rocket and BOOM cores, the TileLink bus, RoCC custom
   coprocessors (Gemmini among them), FireSim for FPGA-accelerated simulation and Hammer for the VLSI flow.
+- Chiplet Cloud (University of Washington) designs chiplet-based ASICs for serving large language models, with a
+  two-phase hardware / software design-space search judged on one metric, total cost of ownership per generated
+  token. ReaLLM, from the same group, is a simulation framework that links accelerator-level detail to system-level
+  LLM serving performance.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -167,6 +171,29 @@ Not taken: Chisel, TileLink, the Rocket and BOOM cores, Linux, FireSim (the same
 Config mixins (the same as configurations as parameters, already taken) and Spike co-simulation (the golden model and
 the retire comparison already do this).
 
+## Ideas taken from ReaLLM and Chiplet Cloud
+
+Reviewed on 2026-11-20. Both target LLM serving in the cloud, so only their methods apply here.
+
+1. **From one measured block to a whole panoramic X-ray (from ReaLLM).** Only `head.0.block.3` can be measured, and a
+   full U-Net does not fit on the Basys3. A per-layer cost model is calibrated on the measured block (one set of
+   parameters each for the custom instructions, the coprocessor and hls4ml) and summed over the U-Net's layers, giving
+   latency and energy per panoramic X-ray for each coupling point. These connect to the measured stage-2 time of the
+   dental deployment pipeline. The dental project's analytic 64 x 64 array model is the starting point.
+2. **One final metric and a small design-space sweep (from Chiplet Cloud).** The comparison reports cycles, area,
+   Fmax and energy, but is judged on one metric, such as energy per panoramic X-ray or area x latency per X-ray. The
+   cost model sweeps a few parameters (`dot4` width 4 or 8, the coprocessor's number of multipliers, the hls4ml reuse
+   factor); measured points calibrate and check the model, and the other points are estimates and are marked as such.
+   This answers which coupling point is best under a given area budget.
+3. **Weights in on-chip SRAM, and 2:4 for capacity (untested idea).** Chiplet Cloud keeps all weights in on-chip
+   SRAM, so there is no DRAM bandwidth limit (and, as I recall, stores them compressed to fit more; not checked yet).
+   2:4 sparsity gave no speedup on the CPU or in hls4ml `io_stream`, but it may still shrink the weights enough for
+   a DRAM-less edge chip. To check: the SRAM area for the INT8 weights of the dental U-Net's slim decoder, with and
+   without 2:4 storage, from the SOC process's memory data.
+
+Not taken: chiplet packaging, rack and server design, cloud serving, LLM-specific parts (KV cache, batching, token
+generation) and cost in money (energy or latency per X-ray fits an edge medical device better).
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
@@ -192,7 +219,9 @@ the retire comparison already do this).
   and control); points 1 and 2 compare custom instructions with a coprocessor. Each point is measured for cycles,
   LUT / FF / DSP and Fmax, for how much of the network it can run without new hardware, and, for points 1 and 2
   through the ASIC flow, for energy per MAC (PrimePower). A hand-written 3x3
-  convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. Planned
+  convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. A
+  per-layer cost model calibrated on these points extends them to latency and energy per panoramic X-ray and to a
+  small design-space sweep under one final metric (see "Ideas taken from ReaLLM and Chiplet Cloud"). Planned
   for after January 2027; the UART bridge and control registers from the board test can be reused.
 - Gemmini in simulation (Chipyard, Verilator) as a reference point for the loosely-coupled end, run on the same
   convolution layer for cycle counts. Optional and only if a paper or the SOP needs it: the install is large (many GB
