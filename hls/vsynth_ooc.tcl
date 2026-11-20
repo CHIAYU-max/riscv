@@ -2,7 +2,11 @@
 # and timing (hls4ml's own vivado_synth.tcl has no clock constraint, so it gives no Fmax).
 # usage (inside a project directory): vivado -mode batch -source ../vsynth_ooc.tcl
 set project_name unet_block
+# part: from part.txt (written by gen_hls4ml.py --part), else the Basys3 part the first runs used
 set part xc7a35tcpg236-1
+if {[file exists part.txt]} {
+    set fh [open part.txt]; set part [string trim [read $fh]]; close $fh
+}
 read_verilog [glob ${project_name}_prj/solution1/syn/verilog/*.v]
 foreach f [glob -nocomplain ${project_name}_prj/solution1/syn/verilog/*.dat] { file copy -force $f . }
 set xdc [open vsynth_clock.xdc w]

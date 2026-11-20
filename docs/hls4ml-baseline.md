@@ -93,7 +93,8 @@ What this shows so far:
   (newer Vitis HLS), rf 1 should finish in tens of cycles and be even larger.
 - The rf 8 / 32 latency range comes from the Resource strategy's `PartitionLoop` (40 to 183 cycles per pixel).
   Vitis HLS 2025.2.1 (local, WSL) schedules rf 32 to a fixed 670 cycles.
-- C/RTL co-simulation (Verilog) passes for all six: the generated RTL is bit-exact too.
+- C/RTL co-simulation (Verilog): the RTL output of all six is identical to the expected output (files compared
+  2026-11-21; the report's "Pass" alone does not show this).
 
 ### Design points that fit (2026-11-19, same tools)
 
@@ -104,7 +105,7 @@ What this shows so far:
 | `io_stream`, rf 32 | 3,945 (19%) | 6,302 (15%) | 75 (83%) | 14 | 1,486 - 1,513 | +2.13 ns | ~127 MHz |
 | `io_stream`, rf 144 | 3,234 (16%) | 5,746 (14%) | 20 (22%) | 8 | 5,342 - 5,473 | +0.33 ns | ~103 MHz |
 
-All four bit-exact in C simulation and pass co-simulation.
+All four bit-exact in C simulation and in RTL co-simulation (output files compared 2026-11-21).
 
 - With `io_parallel` the reuse factor hardly matters past 32: the LUTs are in the fully partitioned 1,152-byte
   input, the im2col multiplexers and the output, not in the multipliers.
@@ -116,7 +117,14 @@ All four bit-exact in C simulation and pass co-simulation.
 
 ### `io_stream` with Vitis HLS / Vivado 2025.2.1 (2026-11-20, local WSL, the version `make fmax` uses)
 
-These are the numbers to compare with the core.
+**Not valid: the RTL computes wrong results (found 2026-11-21).** C simulation is bit-exact, but the RTL
+co-simulation output differs from the expected output in all four projects below (and in all six whole-layer
+projects, with and without forced DSPs). The co-simulation report says "Pass" because hls4ml's test bench does not
+compare anything; the comparison is hls4ml's `validation` step, which `hls/run_local.sh` had switched off. The same
+`io_stream` projects built with Vitis HLS 2020.2 on SOC give RTL outputs identical to the expected ones (compared
+2026-11-21, together with every other 2020.2 project), and `io_parallel` rf 32 with 2025.2.1 is also correct, so
+the fault is in Vitis HLS 2025.2.1's handling of the `io_stream` design (cause not found yet). The numbers below are
+kept only as a record; use the 2020.2 numbers. `hls/run_local.sh` now runs the validation step.
 
 | Design | LUT | FF | DSP | BRAM tiles | Latency (cycles) | WNS at 10 ns | Fmax estimate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -125,7 +133,7 @@ These are the numbers to compare with the core.
 | 2:4, `io_stream`, rf 32 | 11,620 (56%) | 10,002 (24%) | 8 | 13 | 1,487 - 1,513 | +1.33 ns | ~115 MHz |
 | 2:4, `io_stream`, rf 144 | 6,750 (32%) | 8,534 (21%) | 4 | 7 | 5,337 - 5,473 | +0.37 ns | ~104 MHz |
 
-All four bit-exact in C simulation (32 of 32) and pass co-simulation.
+All four bit-exact in C simulation (32 of 32); the RTL output is wrong (above).
 
 - **2025.2.1 builds the 8-bit multipliers from LUTs instead of DSPs**: rf 32 goes from 75 DSP / 3,945 LUT (2020.2)
   to 8 DSP / 11,476 LUT, with the same latency. Which one to report depends on how the core's `dot4` is mapped;
@@ -135,8 +143,52 @@ All four bit-exact in C simulation (32 of 32) and pass co-simulation.
   stores and skips the zeros) gains from sparsity.
 - Latency is the same as with 2020.2, so the 2020.2 cycle counts above hold.
 
+### Whole layer: 32 of 32 output channels on the Nexys A7 and ZedBoard parts (2026-11-21)
+
+The same tile (6x6x32 input, 4x4 output) with all 32 output channels of `head.0.block.3` (147,456 MACs per tile).
+Weights re-exported on 2026-11-21 from the same checkpoint (fold 0; the first 8 channels are identical to the old
+file) into `build/unet/unet_head0b3_cout32.json`. `io_stream`, Vitis HLS / Vivado 2020.2 on SOC
+(`hls/run_soc_cosim.sh`), parts `xc7a100tcsg324-1` (Nexys A7: 63,400 LUT, 240 DSP) and `xc7z020clg484-1`
+(ZedBoard: 53,200 LUT, 220 DSP). "DSP forced" adds `config_op mul -impl dsp` (`gen_hls4ml.py --mul dsp`).
+
+**All 12 projects are bit-exact in C simulation and in RTL co-simulation, and pass hls4ml's validation step**
+(csim and RTL outputs compared, 128 of 128 values).
+
+| Part | Design | LUT | FF | DSP | BRAM tiles | Latency per tile (cycles) | WNS at 10 ns | Fmax estimate |
+| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
+| Nexys A7 | rf 32 | 16,365 (26%) | 14,830 | 240 (100%) | 58 | 1,486 - 1,513 | +2.14 ns | ~127 MHz |
+| Nexys A7 | rf 72 | 8,309 (13%) | 10,823 | 152 (63%) | 40.5 | 2,817 - 2,881 | +1.39 ns | ~116 MHz |
+| Nexys A7 | rf 144 | 7,040 (11%) | 11,163 | 80 (33%) | 33.5 | 5,342 - 5,473 | +0.31 ns | ~103 MHz |
+| Nexys A7 | rf 72, DSP forced | 8,183 (13%) | 10,815 | 154 | 40.5 | 2,817 - 2,881 | +1.39 ns | ~116 MHz |
+| ZedBoard | rf 32 | 17,911 (34%) | 13,903 | 220 (100%) | 58 | 1,451 - 1,477 | +1.39 ns | ~116 MHz |
+| ZedBoard | rf 72 | 7,171 (13%) | 11,322 | 152 (69%) | 40.5 | 2,818 - 2,881 | +1.29 ns | ~115 MHz |
+| ZedBoard | rf 144 | 7,392 (14%) | 10,144 | 80 (36%) | 33.5 | 5,306 - 5,437 | +0.03 ns | ~100 MHz |
+| ZedBoard | rf 32, DSP forced | 17,877 (34%) | 13,300 | 220 | 58 | 1,451 - 1,477 | +2.07 ns | ~126 MHz |
+| ZedBoard | rf 72, DSP forced | 8,190 (15%) | 10,815 | 154 | 40.5 | 2,817 - 2,881 | +1.29 ns | ~115 MHz |
+| ZedBoard | rf 144, DSP forced | 7,052 (13%) | 11,187 | 80 | 33.5 | 5,342 - 5,473 | +0.03 ns | ~100 MHz |
+
+On the Nexys A7, "DSP forced" gives the same result as automatic for rf 32 and rf 144, so those rows are not
+repeated.
+
+- **2020.2 already puts the 8-bit products in DSPs**, so forcing DSPs changes almost nothing (at most 2 DSP and
+  1,000 LUT). The open question of matching 2025.2.1's LUT multipliers is moot, since that version's RTL is wrong.
+- **rf 32 takes every DSP on both parts** (288 multipliers needed) and builds the rest from LUTs. It still fits
+  (26% / 34% of the LUTs), but leaves no DSP for the core; rf 72 leaves about 90 / 70 DSPs.
+- **Throughput.** rf 32 does the 147,456 MACs of a tile in about 1,500 cycles, about 98 MACs per cycle, the same
+  latency as the 8-channel design with 4x the work. Against `block_nn` (0.47 MACs per instruction on the 8-channel
+  tile) that is about 200x per cycle.
+- **One whole layer at 512 x 512** (about 2.4 G MACs) at 100 MHz: about 0.25 s with rf 32, 0.5 s with rf 72,
+  1 s with rf 144 (from the per-tile rate; streaming a 512-wide image needs larger line buffers, about 2 rows x
+  514 x 32 bytes, roughly 9 more 36 Kb block RAMs, not in these numbers).
+- Out-of-context synthesis, no I/O and no AXI wrapper, as above.
+
 ## Notes on the tools
 
+- The local Vivado / Vitis 2025.2.1 has no Zynq-7000 device support installed (`Part 'xc7z020clg484-1' is not
+  installed`); the ZedBoard numbers come from SOC. Installing the Zynq-7000 devices locally (Vivado installer,
+  "Add Design Tools or Devices", needs an AMD account) is needed before the ZedBoard bring-up anyway.
+- Always compare the RTL output with the expected output (hls4ml's `validation` step, on in `hls/run_local.sh` and
+  `hls/run_soc_cosim.sh`); the co-simulation report's "Pass" only means the simulation ran.
 - Vitis HLS 2020.2 (on SOC) is older than what hls4ml 1.3.0 targets; `config_array_partition -maximum_size` is not
   supported there (hls4ml wraps it in `catch`), the rest of the flow ran.
 - hls4ml 1.3.0 with `quantizers` 2.0.0 fails to import (`get_fixed_quantizer_np`); `quantizers` 1.2.2 works.
@@ -156,9 +208,11 @@ All four bit-exact in C simulation (32 of 32) and pass co-simulation.
   input partition applied, the fully unrolled 2,304-multiplier loop is more than the scheduler handles in
   reasonable time, so rf 1 stays at the 2020.2 numbers (marked as limited by the ignored partition).
 
-## Open questions (for 1/18)
+## Open questions (for 3/27; moved from 1/18)
 
-- Final numbers with Vitis / Vivado 2025.2.1, the same version as `make fmax`, so both sides use one tool version.
+- One tool version for both sides: Vitis HLS 2025.2.1 builds wrong `io_stream` RTL, so the hls4ml numbers come
+  from 2020.2 (SOC). Either the core's `make fmax` is also run with Vivado 2020.2 on SOC for the comparison table, or
+  the 2025.2.1 fault is found and fixed (newer hls4ml, a different stream / FIFO setting, or a report to hls4ml).
 - ASIC: does the Vitis HLS Verilog synthesize with DC in `asic/run_asic.sh` (no Xilinx primitives in a pure integer
   design?), so the comparison can be made in standard cells too?
 - Real 2:4 weights from the dental INT8 + 2:4 QAT checkpoint.

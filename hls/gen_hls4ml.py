@@ -84,6 +84,17 @@ def block_data(layer, seed, prune):
                 zeros=int((w == 0).sum()), acc_max=int(np.abs(acc).max()))
 
 
+def bind_multipliers(tcl, impl):
+    """Adds `config_op mul -impl <impl>` right after the clock is set in hls4ml's build_prj.tcl."""
+    lines = tcl.read_text().splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("create_clock"):
+            lines.insert(i + 1, f"config_op mul -impl {impl}\n")
+            tcl.write_text("".join(lines))
+            return
+    raise SystemExit(f"{tcl}: no create_clock line to put config_op after")
+
+
 def build_model(d, cin, cout):
     import torch
     import torch.nn as nn
@@ -119,6 +130,12 @@ def main():
     ap.add_argument("--sparse24", action="store_true")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--clock", type=float, default=10.0, help="clock period in ns (Basys3: 100 MHz)")
+    ap.add_argument("--part", default=PART,
+                    help="FPGA part (Basys3 xc7a35tcpg236-1, Nexys A7 xc7a100tcsg324-1, ZedBoard xc7z020clg484-1)")
+    ap.add_argument("--mul", default="auto", choices=["auto", "dsp", "fabric"],
+                    help="multiplier binding: auto = the tool decides (2025.2.1 picks LUTs for 8-bit products), "
+                         "dsp / fabric = config_op mul -impl ... in build_prj.tcl")
+    ap.add_argument("--tag", default="", help="extra prefix for the project directory names")
     args = ap.parse_args()
 
     import hls4ml
@@ -129,7 +146,7 @@ def main():
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    tag = ("s24_" if args.sparse24 else "") + ("st_" if args.io == "io_stream" else "")
+    tag = args.tag + ("s24_" if args.sparse24 else "") + ("st_" if args.io == "io_stream" else "")
     # test bench data, channels last (HWC), one sample per line
     tb_in, tb_out = out_root / f"{tag}tb_input.dat", out_root / f"{tag}tb_output.dat"
     tb_in.write_text(" ".join(map(str, d["act"].reshape(-1))) + "\n")
@@ -167,9 +184,12 @@ def main():
         prj = out_root / f"{tag}rf{rf}"
         hm = hls4ml.converters.convert_from_pytorch_model(
             model, hls_config=cfg, output_dir=str(prj), project_name="unet_block", backend="Vitis",  # "block" is a VHDL keyword
-            part=PART, clock_period=args.clock, io_type=args.io,
+            part=args.part, clock_period=args.clock, io_type=args.io,
             input_data_tb=str(tb_in), output_data_tb=str(tb_out))
         hm.write()
+        (prj / "part.txt").write_text(args.part + "\n")  # read by vsynth_ooc.tcl
+        if args.mul != "auto":
+            bind_multipliers(prj / "build_prj.tcl", args.mul)
         summary["projects"].append({"name": prj.name, "rf": rf, "strategy": cfg["Model"]["Strategy"], "io": args.io})
         print(f"{prj}: rf {rf} ({cfg['Model']['Strategy']}), {args.io}")
 
