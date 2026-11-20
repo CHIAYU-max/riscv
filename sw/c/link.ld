@@ -1,11 +1,12 @@
-/* C programs: 8 KiB RAM at 0 (the Basys3 memory size; the simulation RAM is larger).
+/* C programs: 32 KiB RAM at 0 (the Nexys A7 build, MEM_KIB=32; the simulation RAM is 64 KiB).
+   The Basys3 build has 8 KiB, so these images do not run there.
    Code, data and stack share it; the stack starts at the top and grows down. */
 OUTPUT_ARCH("riscv")
 ENTRY(_start)
 
 MEMORY
 {
-  RAM (rwx) : ORIGIN = 0x00000000, LENGTH = 8K
+  RAM (rwx) : ORIGIN = 0x00000000, LENGTH = 32K
 }
 
 SECTIONS

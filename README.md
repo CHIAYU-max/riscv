@@ -1,6 +1,6 @@
 # RV32I Processor with a Custom INT8 Dot-Product Instruction
 
-A single-cycle RV32I processor in Verilog for the Digilent Basys3 (Artix-7) FPGA, extended with `dot4`, a custom
+A single-cycle RV32I processor in Verilog for the Digilent Nexys A7-100T (Artix-7) FPGA, extended with `dot4`, a custom
 instruction that does four INT8 multiply-accumulates. The benchmark is the inner loop of an INT8 convolution from
 the U-Net I use in my dental-imaging research.
 
@@ -19,12 +19,13 @@ The verification setup is ready: the riscv-tests rv32ui suite builds and runs ag
 
 - [x] Verification setup: riscv-tests (rv32ui) on a bare-metal test environment, testbench, CI
 - [x] Golden model (instruction-set simulator) with per-instruction trace comparison
-- [x] C runtime and test programs; Basys3 top level, memory-mapped I/O and build script (checked with a stand-in core)
+- [x] C runtime and test programs; FPGA top level, memory-mapped I/O, build and programming scripts (checked on the
+  Nexys A7 with a stand-in core)
 - [ ] Single-cycle RV32I core: decoder, immediates, branches and jumps, loads and stores; passes rv32ui
 - [ ] GCC-compiled C programs running on the core
 - [ ] `dot4` in the core: golden model, tests and convolution benchmark ready; RTL to do
 - [ ] Cycle counts, LUT / FF / DSP and Fmax with and without `dot4`
-- [ ] Run the `dot4` convolution on the Basys3
+- [ ] Run the `dot4` convolution on the Nexys A7
 - [ ] Optional: 5-stage pipeline with forwarding and hazard detection
 
 ## Layout
@@ -79,13 +80,13 @@ Icarus 12 limits to keep in mind:
 
 | Address | Simulation (`tb/tb_core.v`) | FPGA boards (`fpga/rtl/soc.v`) |
 | --- | --- | --- |
-| `0x0000_0000` | RAM, 64 KiB | RAM, 8 KiB (distributed RAM; `MEM_KIB=32` on the Nexys A7), loaded from the program hex at configuration |
+| `0x0000_0000` | RAM, 64 KiB | RAM, 32 KiB (distributed RAM; 8 KiB in the build-only Basys3 version), loaded from the program hex at configuration |
 | `0x8000_0000` TOHOST | store ends the run: 1 = pass, `(n << 1) \| 1` = fail n | store is latched and shown on the 7-segment display; LED15 lights |
 | `0x8000_0004` LED | store is logged | write `LED[15:0]` |
 | `0x8000_0008` SEG | store is logged | write a 32-bit value; bits [15:0] shown as 4 hex digits (Nexys A7: all 32 bits, 8 digits) |
 | `0x8000_000C` SW | reads 0 | read `SW[15:0]` (two-flop synchronized) |
 
-C programs link for 8 KiB (`sw/c/link.ld`) so the same hex runs in simulation and on the board.
+C programs link for 32 KiB (`sw/c/link.ld`) so the same hex runs in simulation and on the board.
 
 ## C programs
 
@@ -97,19 +98,18 @@ make c-test                # sum, fib, sort, muldiv: each returns 0 when its res
 make c-one P=fib VCD=1     # one program; disassembly in build/c/fib.dump
 ```
 
-## Basys3
+## FPGA board (Nexys A7-100T)
 
 ```bash
-source /Xilinx/2025.2.1/Vivado/settings64.sh
-make bit P=demo            # build/fpga/basys3/basys3_top.bit, timing in build/fpga/basys3/timing.rpt
+make bit prog P=demo       # build build/fpga/nexys_a7/nexys_a7_top.bit and program the board over JTAG
 make bit P=demo MHZ=50     # core clock from the MMCM: 25 (default) or 50 MHz
-make prog                  # program the board over JTAG (from WSL: attach the USB with usbipd, docs/nexys-a7.md)
+make fmax P=demo           # Fmax and the core's LUT / FF / DSP
+make fmax P=demo BOARD=basys3   # the same for a Basys3 (8 KiB RAM; build only, not run on a board)
 ```
 
-`demo.c` shows fib(`SW[4:0]`) in hex on the display and a counter on the LEDs. BTNC is reset.
-Program the board with the Vivado Hardware Manager (on Windows if WSL cannot see the USB cable).
-`BOARD=nexys_a7` builds the same design for a Nexys A7-100T (CPU_RESETN is reset, 8 display digits), and
-`MEM_KIB=32` enlarges the RAM there; see [docs/nexys-a7.md](docs/nexys-a7.md).
+`demo.c` shows fib(`SW[4:0]`) in hex on the display and a counter on the LEDs. CPU_RESETN (the red button) is reset.
+From WSL, `make prog` passes the board's USB to WSL with usbipd-win by itself (a one-time `usbipd bind` in Windows
+is needed first). Boards, memory size and the board flow: [docs/nexys-a7.md](docs/nexys-a7.md).
 The memory reads are asynchronous (core interface above), so the RAM is distributed RAM, not block RAM.
 
 ## Test
@@ -306,7 +306,7 @@ benchmark measures a block of that network.
 
 ## Future work
 
-- Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
+- Cycle counts, LUT / FF / DSP and Fmax on the FPGA with and without each instruction.
 - An accumulating `dot4` and post-increment loads, with LLVM support so that C code uses them.
 - A comparison with a small memory-mapped convolution coprocessor on the same layer.
 
@@ -317,5 +317,5 @@ The limits of this approach, when a loosely-coupled accelerator fits better, and
 
 The ALU, register file and control FSM in `rtl/` are my own, and the core and the `dot4`
 RTL will be. The verification environment (`tb/tb_core.v`, `sw/`, CI), the golden model, the C runtime and test
-programs, the Basys3 top level and build scripts (`fpga/`), and the `dot4` tests and benchmark were written with an
+programs, the FPGA top levels, build and programming scripts (`fpga/`), and the `dot4` tests and benchmark were written with an
 AI assistant (Claude).

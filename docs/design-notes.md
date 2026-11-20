@@ -60,7 +60,8 @@ including the parts after the convolution.
    Larger blocks are limited by the 31 usable registers (P x C accumulators plus P + C operands for a P x C block).
    Going further means wider registers, more ports or local storage in the functional unit (weights or accumulators
    kept inside it), which is where a coprocessor starts.
-3. **Memory.** The Basys3 has no DRAM and the core has 8 KiB of program and data memory, so only small tiles fit.
+3. **Memory.** The core has 32 KiB of program and data memory on the FPGA (8 KiB in the Basys3 build) and no DRAM
+   path, so only small tiles fit.
    A full-size U-Net layer does not fit, and at about one MAC per cycle it would also be slow.
 
 ## When a loosely-coupled accelerator is the better choice
@@ -340,7 +341,8 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
 
 ## Next steps
 
-- Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
+- Cycle counts, LUT / FF / DSP and Fmax on the FPGA (Nexys A7; Basys3 as a build-only column) with and without
+  each instruction.
 - An accumulating `dot4` and post-increment loads, to measure how much of the 7-to-3 instruction reduction is real.
   Both need compiler support to be used from C (see below).
 - Compiler support in LLVM's RISC-V backend, in steps:

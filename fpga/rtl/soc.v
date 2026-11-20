@@ -10,7 +10,7 @@
 //   0x8000_000C  SW      read : sw_i[15:0] (synchronized here, two flops)
 module soc #(
     parameter INIT_FILE = "",
-    parameter MEM_KIB   = 8             // 8 (Basys3 default) or 32; must be a power of two
+    parameter MEM_KIB   = 32            // 32 (Nexys A7) or 8 (Basys3); must be a power of two
 ) (
     input  wire        clk_i,
     input  wire        rst_i,           // synchronous, active high, already synchronized to clk_i

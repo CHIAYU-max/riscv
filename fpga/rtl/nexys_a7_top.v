@@ -1,5 +1,5 @@
 // Nexys A7-100T top level: clock, reset and display around soc.v (core + memory + memory-mapped I/O).
-// Same memory map and program image as the Basys3 (docs/nexys-a7.md); the differences are here:
+// Main board. Same memory map as the Basys3 build (docs/nexys-a7.md), 32 KiB RAM; the differences are here:
 //
 // Clock: the 100 MHz board clock (E3) goes through an MMCM to CORE_MHZ (default 25 MHz).
 // Reset: CPU_RESETN (the red button, active low), synchronized and held until the MMCM locks.
@@ -7,7 +7,7 @@
 module nexys_a7_top #(
     parameter INIT_FILE = "",
     parameter CORE_MHZ  = 25,
-    parameter MEM_KIB   = 8             // 8 = same as the Basys3; 32 for larger tiles
+    parameter MEM_KIB   = 32            // matches sw/c/link.ld; 8 = the Basys3 size
 ) (
     input  wire        clk,             // 100 MHz
     input  wire        cpu_resetn,      // reset, active low

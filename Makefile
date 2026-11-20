@@ -16,13 +16,13 @@
 # make block-iss instructions per phase of the U-Net block benchmark (conv, requant, pool) on the golden model
 # make block-test the U-Net block benchmark on rv32i_core (cycles)
 # make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
-# make bit P=demo [BOARD=basys3] [MHZ=25] [MEM_KIB=8]   Vivado bitstream with program P in memory;
-#                BOARD = basys3 or nexys_a7 (fpga/boards.tcl, docs/nexys-a7.md)
+# make bit P=demo [BOARD=nexys_a7] [MHZ=25] [MEM_KIB=32]   Vivado bitstream with program P in memory;
+#                BOARD = nexys_a7 (main board) or basys3 (build only) (fpga/boards.tcl, docs/nexys-a7.md)
 #                (output in build/fpga/<board>/; Vivado from PATH, else /Xilinx/2025.2.1, see VIVADO below)
-# make fmax P=demo [BOARD=basys3] [FMAX_MHZ=50] [MEM_KIB=8] [CORE=...]   place and route, report Fmax and
+# make fmax P=demo [BOARD=nexys_a7] [FMAX_MHZ=50] [MEM_KIB=32] [CORE=...]   place and route, report Fmax and
 #                the core's LUT / FF / DSP (no bitstream; output in build/fmax/<board>/)
 #                bit and fmax also take CORE=<files> (default: the core in rtl/) and HEX=<image> (default: program P)
-# make prog [BOARD=basys3]      program the board over JTAG with the bitstream from make bit; attaches the
+# make prog [BOARD=nexys_a7]    program the board over JTAG with the bitstream from make bit; attaches the
 #                board's USB to WSL first if needed (fpga/attach_usb.sh). Build and program in one go:
 #                make bit prog P=demo BOARD=nexys_a7
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
@@ -59,8 +59,10 @@ C_CFLAGS := -march=rv32i -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles 
 C_PROGS  ?= sum fib sort muldiv
 C_HEX    := $(addprefix build/c/,$(addsuffix .hex,$(C_PROGS)))
 MHZ      ?= 25
-BOARD    ?= basys3
-MEM_KIB  ?= 8
+BOARD    ?= nexys_a7
+# RAM on the board: 32 KiB (Nexys A7, the main board), 8 KiB on the Basys3 (its distributed-RAM limit;
+# build-only, the C programs link for 32 KiB and do not run there)
+MEM_KIB  ?= $(if $(filter basys3,$(BOARD)),8,32)
 # Vivado: the one in PATH (after sourcing settings64.sh), else the WSL install; bin/vivado sets up its own
 # environment, so sourcing is not needed for bit / fmax / prog
 VIVADO   ?= $(or $(shell command -v vivado 2>/dev/null),/Xilinx/2025.2.1/Vivado/bin/vivado)

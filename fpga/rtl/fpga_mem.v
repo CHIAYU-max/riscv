@@ -3,7 +3,7 @@
 // matching the rv32i_core port contract (README "Core interface").
 // Vivado maps asynchronous reads to distributed RAM (LUTs), so keep it small:
 // 2048 words = 8 KiB uses about a quarter of the XC7A35T's distributed RAM per read port;
-// 32 KiB is for the XC7A100T (Nexys A7) only.
+// 32 KiB (the default on the Nexys A7) is too much for the XC7A35T.
 module fpga_mem #(
     parameter WORDS     = 2048,
     parameter AW        = 11,           // log2(WORDS)
