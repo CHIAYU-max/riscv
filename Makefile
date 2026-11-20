@@ -16,10 +16,11 @@
 # make block-iss instructions per phase of the U-Net block benchmark (conv, requant, pool) on the golden model
 # make block-test the U-Net block benchmark on rv32i_core (cycles)
 # make bench     cycles (core) and instructions (golden model) for conv_ref vs conv_dot4
-# make bit P=demo [MHZ=25]      Vivado bitstream for Basys3 with program P in memory
-#                (source Vivado's settings64.sh first; output in build/fpga/)
-# make fmax P=demo [FMAX_MHZ=50] [CORE=...]   place and route on Basys3, report Fmax and the core's
-#                LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/)
+# make bit P=demo [BOARD=basys3] [MHZ=25] [MEM_KIB=8]   Vivado bitstream with program P in memory;
+#                BOARD = basys3 or nexys_a7 (fpga/boards.tcl, docs/nexys-a7.md)
+#                (source Vivado's settings64.sh first; output in build/fpga/<board>/)
+# make fmax P=demo [BOARD=basys3] [FMAX_MHZ=50] [MEM_KIB=8] [CORE=...]   place and route, report Fmax and
+#                the core's LUT / FF / DSP (no bitstream; source settings64.sh first; output in build/fmax/<board>/)
 # make xsim     top_processor demo, Vivado simulator (source Vivado's settings64.sh first)
 # make sim       top_processor demo, Icarus Verilog
 # make lint [WIP=1]  Verilator lint of the core sources (rtl/*.sv and rtl/*.v); WIP=1 hides unused-signal and
@@ -54,6 +55,8 @@ C_CFLAGS := -march=rv32i -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles 
 C_PROGS  ?= sum fib sort muldiv
 C_HEX    := $(addprefix build/c/,$(addsuffix .hex,$(C_PROGS)))
 MHZ      ?= 25
+BOARD    ?= basys3
+MEM_KIB  ?= 8
 VIVADO   ?= vivado
 
 test: build/sim_core $(TEST_HEX)
@@ -76,14 +79,14 @@ build/c/%.hex: build/c/%.elf
 
 bit: build/c/$(P).hex
 	$(VIVADO) -mode batch -nojournal -log build/fpga_build.log -source fpga/build.tcl \
-	    -tclargs build/c/$(P).hex $(MHZ) $(CORE_RTL)
+	    -tclargs $(BOARD) build/c/$(P).hex $(MHZ) $(MEM_KIB) $(CORE_RTL)
 
 # CORE overrides the core sources, e.g. CORE=tb/selftest_core.v to check the script without rv32i_core.v
 CORE ?= $(CORE_RTL)
 FMAX_MHZ ?= 50
 fmax: build/c/$(P).hex
 	$(VIVADO) -mode batch -nojournal -log build/fmax.log -source fpga/fmax.tcl \
-	    -tclargs build/c/$(P).hex $(FMAX_MHZ) $(CORE) | grep FMAX_DONE
+	    -tclargs $(BOARD) build/c/$(P).hex $(FMAX_MHZ) $(MEM_KIB) $(CORE) | grep FMAX_DONE
 
 progress: $(if $(PLAN),,build/sim_core) $(TEST_HEX)
 	@python3 sw/progress.py $(if $(PLAN),,--sim build/sim_core) $(TEST_HEX)

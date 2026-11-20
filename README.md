@@ -35,7 +35,7 @@ tb/                  testbenches and memory init files
 sw/env/              bare-metal riscv-tests environment (riscv_test.h, link.ld)
 sw/c/                C runtime (crt0.S, link.ld, mmio.h) and test / demo programs
 sw/                  hex conversion and test runner scripts
-fpga/                Basys3 top level, memory, 7-segment driver, XDC, Vivado build script
+fpga/                board-independent SoC (core + memory + I/O), Basys3 and Nexys A7 top levels, XDC, Vivado scripts
 asic/                TSMC 0.13 um flow: DC, ICC2, post-layout simulation, PrimeTime / PrimePower, ICV (asic/README.md)
 third_party/         riscv-tests (git submodule)
 docs/                design notes (related work, limits, plans)
@@ -77,12 +77,12 @@ Icarus 12 limits to keep in mind:
 
 ## Memory map
 
-| Address | Simulation (`tb/tb_core.v`) | Basys3 (`fpga/rtl/basys3_top.v`) |
+| Address | Simulation (`tb/tb_core.v`) | FPGA boards (`fpga/rtl/soc.v`) |
 | --- | --- | --- |
-| `0x0000_0000` | RAM, 64 KiB | RAM, 8 KiB (distributed RAM), loaded from the program hex at configuration |
+| `0x0000_0000` | RAM, 64 KiB | RAM, 8 KiB (distributed RAM; `MEM_KIB=32` on the Nexys A7), loaded from the program hex at configuration |
 | `0x8000_0000` TOHOST | store ends the run: 1 = pass, `(n << 1) \| 1` = fail n | store is latched and shown on the 7-segment display; LED15 lights |
 | `0x8000_0004` LED | store is logged | write `LED[15:0]` |
-| `0x8000_0008` SEG | store is logged | write a 16-bit value, shown as 4 hex digits |
+| `0x8000_0008` SEG | store is logged | write a 32-bit value; bits [15:0] shown as 4 hex digits (Nexys A7: all 32 bits, 8 digits) |
 | `0x8000_000C` SW | reads 0 | read `SW[15:0]` (two-flop synchronized) |
 
 C programs link for 8 KiB (`sw/c/link.ld`) so the same hex runs in simulation and on the board.
@@ -101,12 +101,14 @@ make c-one P=fib VCD=1     # one program; disassembly in build/c/fib.dump
 
 ```bash
 source /Xilinx/2025.2.1/Vivado/settings64.sh
-make bit P=demo            # build/fpga/basys3_top.bit, timing in build/fpga/timing.rpt
+make bit P=demo            # build/fpga/basys3/basys3_top.bit, timing in build/fpga/basys3/timing.rpt
 make bit P=demo MHZ=50     # core clock from the MMCM: 25 (default) or 50 MHz
 ```
 
 `demo.c` shows fib(`SW[4:0]`) in hex on the display and a counter on the LEDs. BTNC is reset.
 Program the board with the Vivado Hardware Manager (on Windows if WSL cannot see the USB cable).
+`BOARD=nexys_a7` builds the same design for a Nexys A7-100T (CPU_RESETN is reset, 8 display digits), and
+`MEM_KIB=32` enlarges the RAM there; see [docs/nexys-a7.md](docs/nexys-a7.md).
 The memory reads are asynchronous (core interface above), so the RAM is distributed RAM, not block RAM.
 
 ## Test

@@ -1,28 +1,28 @@
-# Non-project Vivado build for Basys3 (XC7A35T-1CPG236C).
-#   vivado -mode batch -source fpga/build.tcl -tclargs <program.hex> [core_mhz] [core_rtl...]
-# Run from the repo root. Reports and the bitstream go to build/fpga/.
-set hex      [file normalize [lindex $argv 0]]
-set core_mhz [expr {[llength $argv] > 1 ? [lindex $argv 1] : 25}]
-set core_rtl [lrange $argv 2 end]
-set out build/fpga
+# Non-project Vivado build for one board of fpga/boards.tcl (basys3, nexys_a7).
+#   vivado -mode batch -source fpga/build.tcl -tclargs <board> <program.hex> <core_mhz> <mem_kib> [core_rtl...]
+# Run from the repo root (make bit BOARD=... does). Reports and the bitstream go to build/fpga/<board>/.
+source fpga/boards.tcl
+set board    [lindex $argv 0]
+set hex      [file normalize [lindex $argv 1]]
+set core_mhz [lindex $argv 2]
+set mem_kib  [lindex $argv 3]
+set core_rtl [lrange $argv 4 end]
+set top      [board_get $board top]
+set out      build/fpga/$board
 file mkdir $out
 
-read_verilog [glob fpga/rtl/*.v]
-foreach f $core_rtl {
-    if {[file extension $f] eq ".sv"} { read_verilog -sv $f } else { read_verilog $f }
-}
-read_xdc fpga/basys3.xdc
+read_board_sources $board $core_rtl
 
-synth_design -top basys3_top -part xc7a35tcpg236-1 \
-    -generic INIT_FILE="$hex" -generic CORE_MHZ=$core_mhz
+synth_design -top $top -part [board_get $board part] \
+    -generic INIT_FILE="$hex" -generic CORE_MHZ=$core_mhz -generic MEM_KIB=$mem_kib
 report_utilization -file $out/utilization_synth.rpt
 opt_design
 place_design
 route_design
 report_utilization    -file $out/utilization.rpt
 report_timing_summary -file $out/timing.rpt
-write_bitstream -force $out/basys3_top.bit
+write_bitstream -force $out/$top.bit
 
 # One-line summary for the terminal
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
-puts "BUILD_DONE core=${core_mhz}MHz WNS=${wns}ns bit=$out/basys3_top.bit"
+puts "BUILD_DONE board=$board core=${core_mhz}MHz mem=${mem_kib}KiB WNS=${wns}ns bit=$out/$top.bit"

@@ -1,8 +1,9 @@
-// Unified instruction / data memory for Basys3.
+// Unified instruction / data memory for the FPGA boards (size set by soc.v's MEM_KIB).
 // Two asynchronous read ports and one synchronous write port with byte enables,
 // matching the rv32i_core port contract (README "Core interface").
 // Vivado maps asynchronous reads to distributed RAM (LUTs), so keep it small:
-// 2048 words = 8 KiB uses about a quarter of the XC7A35T's distributed RAM per read port.
+// 2048 words = 8 KiB uses about a quarter of the XC7A35T's distributed RAM per read port;
+// 32 KiB is for the XC7A100T (Nexys A7) only.
 module fpga_mem #(
     parameter WORDS     = 2048,
     parameter AW        = 11,           // log2(WORDS)
