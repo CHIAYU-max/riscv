@@ -26,6 +26,8 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
 - OpenPiton (Princeton) is an open manycore research platform with the P-Mesh coherent cache system. Its BYOC
   framework connects any core or accelerator through one narrow handshaked interface (the Transaction-Response
   Interface) and a small per-core transducer.
+- Chipyard (Berkeley) is a Chisel SoC generator with Rocket and BOOM cores, the TileLink bus, RoCC custom
+  coprocessors (Gemmini among them), FireSim for FPGA-accelerated simulation and Hammer for the VLSI flow.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -141,6 +143,30 @@ Not taken: the P-Mesh coherence system and its on-chip networks, the manycore, t
 heterogeneous-ISA support, and OpenPiton's test infrastructure (this project already has the golden model, random
 tests and CI).
 
+## Ideas taken from Chipyard
+
+Reviewed on 2026-11-20. Neither Chipyard nor Chisel is used.
+
+1. **One register table for the RTL and the C header.** Chipyard's MMIO peripherals describe their registers in one
+   declarative map that generates the register hardware. Here, a small Python script reads one table of the board-test
+   registers (start, done, cycle count, FIFO addresses) and writes both the SystemVerilog register decoder and the C
+   header that the host program uses with both back ends (Verilator and UART). The addresses in the RTL and in the
+   host program then cannot disagree, and the coprocessor later adds rows to the same table. The same table also gives
+   the address ranges of the transducers on the bus outside the core.
+2. **A RoCC-style command interface as a variant of the coprocessor.** RoCC sends commands to an accelerator as custom
+   instructions (funct7 and two source registers, optionally writing `rd`), and the accelerator reaches memory through
+   its own port. `dot4` already uses custom-0, so point 2 of the coupling comparison can be attached in two ways:
+   (a) memory-mapped registers; (b) RoCC-style, with the core issuing custom instructions and the coprocessor reading
+   and writing its scratchpads directly. The difference between (a) and (b) is the cost of issuing commands. (a)
+   comes first; (b) is optional.
+3. **Design, tool and process settings kept apart (from Hammer).** `asic/run_asic.sh` reads one design file (top
+   module, file list, clock), so the same script runs the core with and without `dot4` and later the hls4ml
+   coprocessor. This matters mainly for the energy comparison of several designs.
+
+Not taken: Chisel, TileLink, the Rocket and BOOM cores, Linux, FireSim (the same idea as ZynqParrot, already taken),
+Config mixins (the same as configurations as parameters, already taken) and Spike co-simulation (the golden model and
+the retire comparison already do this).
+
 ## Next steps
 
 - Cycle counts, LUT / FF / DSP and Fmax on the Basys3 with and without each instruction.
@@ -168,4 +194,6 @@ tests and CI).
   through the ASIC flow, for energy per MAC (PrimePower). A hand-written 3x3
   convolution coprocessor with its own line buffer can be added later to compare hand-written RTL with HLS. Planned
   for after January 2027; the UART bridge and control registers from the board test can be reused.
-- Gemmini in simulation (Chipyard) as a reference point for the loosely-coupled end.
+- Gemmini in simulation (Chipyard, Verilator) as a reference point for the loosely-coupled end, run on the same
+  convolution layer for cycle counts. Optional and only if a paper or the SOP needs it: the install is large (many GB
+  and a conda environment, with 10 GB of memory in WSL), and it is not this project's own design.
