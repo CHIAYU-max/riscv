@@ -36,6 +36,11 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
   P-Mesh as a reconfigurable accelerator. CGRAs (coarse-grained reconfigurable arrays) sit between FPGAs and fixed
   accelerators: arrays of word-level processing elements whose functions and connections are set by configuration
   registers (for example Cornell's UE-CGRA and Stanford's Canal interconnect generator).
+- Ang Li's group at the University of Washington (PRGA's author): Duet (HPCA 2023) makes embedded FPGAs cache-coherent
+  peers of the cores; DICE (ISCA 2026) replaces a GPU's SIMD back end with statically scheduled CGRAs to cut
+  register-file accesses; MFSA (ICCD 2026) is a multi-format systolic array whose processing elements share one
+  datapath from FP32 down to INT4, including block-scaled formats; CacheFlex (MICRO 2026) lets software turn part of
+  the private L2 into a scratchpad at run time.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -294,6 +299,33 @@ methods do.
 Not taken: the security blocks (cryptography, key management, side-channel countermeasures) and secure boot, the
 TL-UL bus, the UVM environment (it needs a commercial simulator; the golden model and random tests cover this
 project's scale), and Ibex as the core (it is a reference to read, next to HammerBlade's Vanilla-5).
+
+## Ideas taken from Duet, DICE, MFSA and CacheFlex
+
+Reviewed on 2026-11-20 from the papers' abstracts; the full papers are still to be read.
+
+1. **One datapath for INT8 and INT4 (from MFSA).** MFSA's processing elements share one datapath across formats, with
+   throughput growing as the width shrinks. Here, one dot-product unit runs both `dot4` (four u8 x s8 products) and
+   `dot8` (eight u4 x s4 products) instead of two separate units, and the INT4 mode is a core-package parameter, so the
+   area cost of adding it is measured directly. The golden-model `dot8` already exists (1.71x to 1.76x fewer
+   instructions than the INT8 block), and the dental U-Net passes W4A8 quantization-aware training, so the condition
+   set earlier for writing the `dot8` RTL is met. Block-scaled (MX-style) quantization of the dental model, compared
+   with the current per-channel fixed point, is a later experiment.
+2. **Communication first, then applications (from Duet).** Duet measures processor-accelerator latency and bandwidth
+   with synthetic benchmarks before running applications. Here, a microbenchmark measures the core-to-coprocessor
+   round trip (start to done) and the cost per transferred word with the event counters, so the gap between coupling
+   points 2 and 3 splits into latency and bandwidth.
+3. **Energy split by structure (from DICE).** DICE's gain comes from avoiding register-file accesses. The PrimePower
+   measurement reports energy for the register file, the ALU / `dot4` unit and memory separately; a large
+   register-file share is the measured case for an accumulating `dot4`, an internal accumulator or a coprocessor.
+4. **One SRAM, two roles (from CacheFlex, later).** A partition register in the register table splits the 8 KiB data
+   memory between core data and the coprocessor's scratchpad, so tiles can grow while the coprocessor runs.
+
+Not taken: embedded FPGAs and coherent integration (Duet), GPUs, SIMT and the CGRA mapping compiler (DICE), floating
+point formats and FP32 accumulation (MFSA; the dental model holds its accuracy in integer fixed point), out-of-order
+pipelines and OS support (CacheFlex). CHIALU (an ALU generation and optimization library, A3 workshop 2026) has no
+public abstract yet; if it is released, a generated unit could serve as a comparison point for the hand-written
+`dot4`, which stays hand-written.
 
 ## Reused components
 
