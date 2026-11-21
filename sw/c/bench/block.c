@@ -4,6 +4,8 @@
 //   block_mul   RV32IM (golden model only): the same C code with hardware mul / mulh
 //   block_dot4  -DUSE_DOT4: dot4 for the convolution, the rest as in block_ref
 //   block_nn    -DUSE_NNOPS: dot4, requant and max4 (four channels per instruction)
+//   block_sa    -DUSE_SDOT4: as block_nn, convolution with sdot4 on packed 2:4 weights (one group per instruction)
+//   block_sb    -DUSE_SDOT8: as block_nn, convolution with sidx + sdot8 (two groups per instruction, CIN % 32 == 0)
 //   block_rb    -DUSE_RB: as block_nn, with register blocking in the convolution: 2 output pixels x 4 output
 //               channels at a time, so each loaded activation word feeds 4 dot4s and each weight word 2
 //               (6 loads per 8 dot4s instead of 16)
@@ -12,6 +14,10 @@
 #include "block_data.h"
 #include "../dot4.h"
 #include "../nnops.h"
+#include "../sdot.h"
+#if defined(USE_SDOT4) || defined(USE_SDOT8)
+#define USE_NNOPS
+#endif
 #ifdef USE_RB
 #define USE_NNOPS
 #endif
@@ -62,7 +68,23 @@ __attribute__((noinline)) static void conv(void)
                     for (int kx = 0; kx < 3; kx++) {
                         const unsigned char *a = &act[((oy + ky) * (OW + 2) + (ox + kx)) * CIN];
                         const signed char *w = &wgt[((oc * 3 + ky) * 3 + kx) * CIN];
-#ifdef USE_DOT4
+#if defined(USE_SDOT4)
+                        const unsigned *a4 = (const unsigned *)a;
+                        const unsigned *ws = &wsa[((oc * 3 + ky) * 3 + kx) * CIN / 4];
+                        (void)w;
+                        for (int c = 0; c < CIN / 4; c++)
+                            acc += sdot4(a4[c], ws[c]);
+#elif defined(USE_SDOT8)
+                        const unsigned *a4 = (const unsigned *)a;
+                        const unsigned *ws = &wsb[((oc * 3 + ky) * 3 + kx) * CIN / 8];
+                        const unsigned *ix = (const unsigned *)&isb[((oc * 3 + ky) * 3 + kx) * CIN / 8];
+                        (void)w;
+                        for (int c = 0; c < CIN / 32; c++) {
+                            sidx(ix[c]);
+                            for (int j = 0; j < 4; j++)
+                                acc += sdot8(a4[8 * c + 2 * j], a4[8 * c + 2 * j + 1], ws[4 * c + j]);
+                        }
+#elif defined(USE_DOT4)
                         const unsigned *a4 = (const unsigned *)a, *w4 = (const unsigned *)w;
                         for (int c = 0; c < CIN / 4; c++)
                             acc += dot4(a4[c], w4[c]);

@@ -44,6 +44,12 @@ DOT4_RS2_SIGNED = True
 MAX4_FUNCT3 = 1
 REQUANT_FUNCT3 = 2
 
+# Sparse dot products for 2:4 weights (also only with --dot4; branch sparse-dot, golden model only).
+# Keep in sync with sw/c/sdot.h, which describes the encodings.
+SDOT4_FUNCT3 = 3
+SIDX_FUNCT3 = 4
+SDOT8_OPCODE = 0x2B   # custom-1, R4-type
+
 
 def sext(value, bits):
     sign = 1 << (bits - 1)
@@ -82,6 +88,7 @@ class RV32I:
         for i, word in enumerate(words[:MEM_BYTES // 4]):
             self.mem[4 * i:4 * i + 4] = word.to_bytes(4, "little")
         self.x = [0] * 32
+        self.idx = 0          # index register of sdot8 (sidx)
         self.pc = 0
         self.trace = []
 
@@ -214,6 +221,17 @@ class RV32I:
             value = max4(rs1, rs2)
         elif op == DOT4_OPCODE and self.dot4 and f3 == REQUANT_FUNCT3 and f7 == 0:   # requant (custom-0)
             value = requant(rs1, rs2)
+        elif op == DOT4_OPCODE and self.dot4 and f3 == SDOT4_FUNCT3 and f7 == 0:     # sdot4 (custom-0)
+            i0, i1 = rs2 >> 16 & 3, rs2 >> 18 & 3
+            value = (byte_lane(rs1, i0, False) * byte_lane(rs2, 0, True)
+                     + byte_lane(rs1, i1, False) * byte_lane(rs2, 1, True))
+        elif op == DOT4_OPCODE and self.dot4 and f3 == SIDX_FUNCT3 and f7 == 0:      # sidx (custom-0)
+            self.idx = rs1
+        elif op == SDOT8_OPCODE and self.dot4 and f3 == 0 and f7 & 3 == 0:          # sdot8 (custom-1, R4)
+            w, ix = x[insn >> 27 & 31], self.idx
+            lanes = [(rs1, ix & 3), (rs1, ix >> 2 & 3), (rs2, ix >> 4 & 3), (rs2, ix >> 6 & 3)]
+            value = sum(byte_lane(a, i, False) * byte_lane(w, k, True) for k, (a, i) in enumerate(lanes))
+            self.idx = ix >> 8
         else:                                          # SYSTEM (ecall, CSRs) and anything else
             raise Halt("ILLEGAL")
 
