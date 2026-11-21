@@ -358,6 +358,11 @@ paper's later sections and are not checked word for word.
    9.2 GFLOPs at 81.6% for uniform 2:4. Here, the coprocessor supports the same three levels, and the dental project
    measures each layer's sensitivity to 1:4 on the CV folds (planned in `~/YOLOv8/EXPERIMENTS.md`, to-do list). It
    is an input to the design space, not a deployment change.
+   Done on 2026-11-21 (`nm_sensitivity.py`, seed 0, CV only, no fine-tuning): 15 of 45 layers alone lose at most
+   0.5 points of hit rate and 0.005 mf Dice at 1:4, but they are small encoder layers (18.6% of the dense MACs),
+   while the largest decoder and head layers lose 0.02 to 0.045 mf Dice; switching the 15 together loses 8.6
+   points of hit rate (CI -11.1 to -5.9) for 9.2% fewer effective MACs. Per-layer sensitivities do not add up, and
+   1:4 has no accuracy support here, so the coprocessor needs dense and 2:4 only.
 4. **Tiles sized by a memory predictor (from MAFAT, Farley and Gerstlauer, IESS 2022).** MAFAT predicts a tile's
    memory as scratch + output + 2 x input and searches fusing cuts and tile counts until the prediction fits the
    limit; on a Raspberry Pi 3 with 16 MB it is 2.78x faster than the untiled run and within 6% of the best measured
