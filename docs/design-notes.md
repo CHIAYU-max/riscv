@@ -384,8 +384,14 @@ paper's later sections and are not checked word for word.
    Done on 2026-11-21 (`nm_sensitivity.py`, seed 0, CV only, no fine-tuning): 15 of 45 layers alone lose at most
    0.5 points of hit rate and 0.005 mf Dice at 1:4, but they are small encoder layers (18.6% of the dense MACs),
    while the largest decoder and head layers lose 0.02 to 0.045 mf Dice; switching the 15 together loses 8.6
-   points of hit rate (CI -11.1 to -5.9) for 9.2% fewer effective MACs. Per-layer sensitivities do not add up, and
-   1:4 has no accuracy support here, so the coprocessor needs dense and 2:4 only.
+   points of hit rate (CI -11.1 to -5.9) for 9.2% fewer effective MACs. Per-layer sensitivities do not add up.
+   With fine-tuning the picture changes (`nm_followup.py`, same budget as the 2:4 model: 15 epochs, lr 3e-5,
+   criteria set before the run): all 45 layers at 1:4 recover to -0.18 points of hit rate (CI -1.61 to +1.43) and
+   -0.010 mf Dice for 48.5% fewer effective MACs, passing; the 15 tolerant layers alone end at -1.07 points (CI
+   -2.33 to +0.18), just failing, which looks like single-seed noise. So a no-fine-tuning scan does not predict the
+   fine-tuned result, and 1:4 has seed-0 FP32 support: the coprocessor keeps the dense, 2:4 and 1:4 modes of item 1
+   (1:4 halves the effective MACs again on the same processing elements). 1:4 with INT8 and seeds 1 to 4 are not
+   tested yet.
 4. **Tiles sized by a memory predictor (from MAFAT, Farley and Gerstlauer, IESS 2022).** MAFAT predicts a tile's
    memory as scratch + output + 2 x input and searches fusing cuts and tile counts until the prediction fits the
    limit; on a Raspberry Pi 3 with 16 MB it is 2.78x faster than the untiled run and within 6% of the best measured
