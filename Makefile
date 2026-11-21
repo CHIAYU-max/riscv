@@ -179,7 +179,8 @@ BLOCK_DEPS  := sw/c/bench/block.c build/c/block_data.h sw/c/dot4.h sw/c/nnops.h 
 
 # BLOCK_WEIGHTS=<layer.json> (sw/export_layer.py) uses a trained layer instead of random weights; block_args
 # changes whenever the generator arguments do, so switching back and forth rebuilds the data
-BLOCK_GEN_ARGS := $(if $(BLOCK_WEIGHTS),--weights $(BLOCK_WEIGHTS))
+# BLOCK_SHAPE="--oh 8 --ow 8 --cout 8" sets the tile shape (sw/tile_plan.py uses it)
+BLOCK_GEN_ARGS := $(if $(BLOCK_WEIGHTS),--weights $(BLOCK_WEIGHTS)) $(BLOCK_SHAPE)
 build/c/block_args: FORCE
 	@mkdir -p build/c; echo '$(BLOCK_GEN_ARGS)' | cmp -s - $@ || echo '$(BLOCK_GEN_ARGS)' > $@
 

@@ -368,6 +368,15 @@ paper's later sections and are not checked word for word.
    limit; on a Raspberry Pi 3 with 16 MB it is 2.78x faster than the untiled run and within 6% of the best measured
    setting. Here, the same predictor picks the tiles for the one-layer board run in December (Nexys A7, 32 KiB data
    memory, a 512 x 512 layer), so tile sizes are computed before the run rather than found by trial on the board.
+   Done on 2026-11-21 (branch `tile-plan`, `sw/tile_plan.py`): the predictor is the memory `block.c` allocates for
+   one tile plus a fixed part (code, stack) measured from six builds of `block_rb` (at most 1,056 B); predictions
+   matched the linked programs within 20 B (8 x 16 x 16: 22,844 B exactly; 16 x 16 x 16 predicted 38,716 B, the
+   link overflowed 32 KiB by 5,952 B, i.e. 38,720 B). Golden-model instructions per tile fit 259 per output (fit
+   error 0.5%), so on `block_rb` the tile shape changes the data moved, not the compute. For `head.0.block.3`
+   (512 x 512, CIN 32, COUT 32) in 32 KiB, the largest tile with all 32 output channels is 8 x 8 x 32 (25,040 B,
+   passes); the shape that moves least data for the whole layer is 8 x 16 x 16 (4,096 tiles, 45 MB between host
+   and board against 54 MB for 8 x 8 x 32), 2.17 G instructions in all, about 43 s at an assumed 50 MHz. At
+   115,200 baud, 45 MB is over an hour of UART traffic, which confirms that the whole layer belongs on the ZedBoard.
    Later, on the ZedBoard, consecutive layers are fused to keep intermediate maps out of DDR3. MAFAT was tested only
    on YOLOv2; the U-Net adds skip connections whose encoder maps must stay alive until the decoder uses them, which
    MAFAT does not model.
