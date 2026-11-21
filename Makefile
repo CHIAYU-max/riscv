@@ -179,8 +179,9 @@ BLOCK_DEPS  := sw/c/bench/block.c build/c/block_data.h sw/c/dot4.h sw/c/nnops.h 
 
 # BLOCK_WEIGHTS=<layer.json> (sw/export_layer.py) uses a trained layer instead of random weights; block_args
 # changes whenever the generator arguments do, so switching back and forth rebuilds the data
-# BLOCK_SHAPE="--oh 8 --ow 8 --cout 8" sets the tile shape (sw/tile_plan.py uses it)
-BLOCK_GEN_ARGS := $(if $(BLOCK_WEIGHTS),--weights $(BLOCK_WEIGHTS)) $(BLOCK_SHAPE)
+# BLOCK_SHAPE="--oh 8 --ow 8 --cout 8" sets the tile shape (sw/tile_plan.py uses it); BLOCK_SPARSE=1 forces 2:4
+# on random weights (sparse-iss)
+BLOCK_GEN_ARGS := $(if $(BLOCK_WEIGHTS),--weights $(BLOCK_WEIGHTS)) $(BLOCK_SHAPE) $(if $(BLOCK_SPARSE),--sparse24)
 build/c/block_args: FORCE
 	@mkdir -p build/c; echo '$(BLOCK_GEN_ARGS)' | cmp -s - $@ || echo '$(BLOCK_GEN_ARGS)' > $@
 
@@ -203,6 +204,19 @@ build/c/block_nn.elf: $(BLOCK_DEPS)
 # block_nn with a 2 x 4 register block in the convolution (software only)
 build/c/block_rb.elf: $(BLOCK_DEPS)
 	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_RB sw/c/crt0.S $< -lgcc -o $@
+
+# 2:4 sparse convolutions (golden model only; need 2:4 weights: BLOCK_WEIGHTS of a 2:4 model, or random weights
+# with BLOCK_SPARSE=1). sparse-iss counts instructions per phase for block_nn, block_sa and block_sb.
+build/c/block_sa.elf: $(BLOCK_DEPS) sw/c/sdot.h
+	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_SDOT4 sw/c/crt0.S $< -lgcc -o $@
+
+build/c/block_sb.elf: $(BLOCK_DEPS) sw/c/sdot.h
+	$(CC) $(C_CFLAGS) -Ibuild/c -DUSE_SDOT8 sw/c/crt0.S $< -lgcc -o $@
+
+sparse-iss: build/c/block_nn.hex build/c/block_sa.hex build/c/block_sb.hex
+	@fail=0; for hex in $^; do \
+	    python3 sw/iss.py --dot4 --max-steps $(BLOCK_STEPS) --profile $${hex%.hex}.dump $$hex || fail=1; \
+	done; exit $$fail
 
 # Instructions per phase on the golden model (--mul only matters for block_mul)
 block-iss: $(BLOCK_HEX)

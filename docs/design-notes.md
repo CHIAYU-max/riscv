@@ -353,6 +353,29 @@ paper's later sections and are not checked word for word.
    per-tile index register. The golden model measures both forms on `head.0.block.3` with the dental 2:4 mask,
    including the cost of unpacking indices, and compares them with `dot4` in instruction count; the RTL joins the
    shared INT8 / INT4 dot unit (item 1 of the Duet / MFSA section) only if the count drops.
+
+   Measured on 2026-11-21 (golden model, branch `sparse-dot`, `make sparse-iss BLOCK_WEIGHTS=<layer.json>`): the
+   real 2:4 weights of `head.0.block.3` from the dental model with 45 layers at 2:4 (seed 0, fold 0, first 8 of 32
+   output channels, all 576 groups with exactly two non-zeros); random 2:4 weights give the same counts. All
+   builds match the expected output. `sdot4` is `custom-0` funct3 3; `sidx` (funct3 4) loads an index register;
+   `sdot8` is R4-type on `custom-1` and shifts the index register by 8 bits after each use (`sw/c/sdot.h`).
+
+   | Build | Convolution | Whole block | Weight bytes |
+   | --- | ---: | ---: | ---: |
+   | `block_nn` (dense `dot4`) | 76,261 | 78,504 | 2,304 |
+   | `block_sa` (`sdot4`, one group per instruction) | 76,261 | 78,504 | 2,304 |
+   | `block_sb` (`sidx` + `sdot8`, two groups per instruction) | 55,426 | 57,671 | 1,440 |
+   | `block_rb` (dense `dot4`, 2 x 4 register block, no new hardware) | 31,080 | 33,325 | 2,304 |
+
+   `sdot4` changes nothing, as predicted. The `sdot8` inner loop is 8 instructions for 8 input channels (three
+   loads, `sdot8`, the add, two address increments, the branch) against 14 for two `dot4` iterations, but the
+   convolution drops only 1.38x: with CIN 32 each 3 x 3 position runs four `sdot8` and one `sidx`, and the outer
+   loops stay. Register blocking without any new hardware is still 1.78x fewer instructions than `sdot8`. The two
+   do not combine freely: one index register serves one output channel at a time, so a register-blocked `sdot8`
+   can reuse weights across pixels but not across output channels (each channel has its own indices). So 2:4 in
+   the core buys 1.6x smaller weights and at most 1.38x fewer instructions, at the cost of a third register read
+   port and index state the core must save; the measured case for skipping zeros stays with the coprocessor
+   (item 1).
 3. **One N:M level per layer (from ELSA, Huang et al., CVPRW 2024).** ELSA picks each layer's sparsity from the set
    the accelerator supports ({1:4, 2:4, 4:4}); DeiT-B goes from 17.6 to 6.0 GFLOPs at 81.8% to 81.4% accuracy, against
    9.2 GFLOPs at 81.6% for uniform 2:4. Here, the coprocessor supports the same three levels, and the dental project

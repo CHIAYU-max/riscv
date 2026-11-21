@@ -38,6 +38,8 @@ def main():
     parser.add_argument("--ow", type=int, default=4, help="convolution output width (even)")
     parser.add_argument("--cout", type=int, default=8, help="output channels (multiple of 4)")
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--sparse24", action="store_true",
+                        help="force 2:4 on random weights (two zeros per group of 4 input channels); trained 2:4 weights are detected")
     parser.add_argument("--weights", help="JSON from sw/export_layer.py: trained s8 weights and int32 bias")
     args = parser.parse_args()
     layer = json.load(open(args.weights)) if args.weights else None
@@ -53,6 +55,12 @@ def main():
     if layer:
         wgt, bias = layer["wgt"], layer["bias"]
         assert len(wgt) == cout * 9 * cin and len(bias) == cout
+    if args.sparse24 and not layer:
+        for g in range(0, len(wgt), 4):
+            for k in rng.sample(range(4), 2):
+                wgt[g + k] = 0
+    groups = [wgt[g:g + 4] for g in range(0, len(wgt), 4)]
+    sparse24 = all(sum(v != 0 for v in grp) <= 2 for grp in groups)
 
     # convolution, HWC: acc[(oy * ow + ox) * cout + oc]
     acc = [0] * (oh * ow * cout)
@@ -100,6 +108,29 @@ def main():
         f.write(array("int", "bias", bias))
         f.write(array("unsigned", "rq_params", [f"0x{p:08x}u" for p in params]))
         f.write(array("unsigned char", "expected", pooled))
+        if sparse24:
+            # each group: its (up to) two non-zeros in channel order with their channel indices; a group with
+            # fewer than two non-zeros is padded with weight 0 at an unused index
+            packed = []
+            for grp in groups:
+                nz = [k for k in range(4) if grp[k] != 0]
+                nz += [k for k in range(4) if k not in nz][:2 - len(nz)]
+                packed.append([(grp[k], k) for k in sorted(nz)])
+            wa = [(pk[0][0] & 0xFF) | (pk[1][0] & 0xFF) << 8 | pk[0][1] << 16 | pk[1][1] << 18 for pk in packed]
+            f.write("#define SPARSE24 1\n")
+            f.write(array("unsigned", "wsa", [f"0x{v:08x}u" for v in wa]))
+            if cin % 32 == 0:
+                wb, ib = [], []
+                for p0, p1 in zip(packed[0::2], packed[1::2]):
+                    ws = [p0[0][0], p0[1][0], p1[0][0], p1[1][0]]
+                    wb.append(sum((v & 0xFF) << (8 * k) for k, v in enumerate(ws)))
+                    ib.append(p0[0][1] | p0[1][1] << 2 | p1[0][1] << 4 | p1[1][1] << 6)
+                f.write("#define SPARSE24_PAIRS 1\n")
+                f.write(array("unsigned", "wsb", [f"0x{v:08x}u" for v in wb]))
+                f.write(array("unsigned char", "isb", ib))
+            dense_b, a_b = cout * 9 * cin, 4 * len(wa)
+            b_b = cout * 9 * cin // 2 + cout * 9 * cin // 8
+            f.write(f"// weight bytes: dense {dense_b}, sdot4 packing {a_b}, sdot8 packing {b_b}\n")
 
 
 if __name__ == "__main__":
