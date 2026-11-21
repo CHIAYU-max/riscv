@@ -328,6 +328,81 @@ pipelines and OS support (CacheFlex). CHIALU (an ALU generation and optimization
 public abstract yet; if it is released, a generated unit could serve as a comparison point for the hand-written
 `dot4`, which stays hand-written.
 
+## Ideas taken from UT Austin work (SST, ELSA, ATB, HMix, CoMeFa, MAFAT, GEMM on AI-optimized FPGAs)
+
+Reviewed on 2026-11-21 from the full papers (SST, ELSA, MAFAT, ATB, HMix, CoMeFa, the FCCM 2024 GEMM paper) and
+from the ECE382M.20 SoC Design lectures (Gerstlauer, Lecture 10 "System Integration & Accelerator Interfacing";
+McDermott, "HW Accelerators and Co-Processors", both Fall 2026). Some SST overhead numbers came from a summary of the
+paper's later sections and are not checked word for word.
+
+1. **A 2:4 processing element that skips zeros (from Systolic Sparse Tensor Slices, Taka et al., FPGA 2025).** The
+   weights are the sparse operand: each group of four keeps its two non-zeros and a 2-bit index per non-zero (1.6x
+   smaller than dense INT8). The dense activations reach each PE through a 4:1 multiplexer driven by the index, and
+   the four activations stay in registers for two cycles, so a PE does one MAC per cycle and the array runs 2:4 at
+   twice the dense rate. The slice is a 4 x 4 output-stationary array (INT8 multiply, INT32 accumulate), and a 2-bit
+   `sparsity_level` input switches between dense, 2:4, 1:3 and 1:4 at run time. Here, the hand-written coprocessor
+   copies this PE and the run-time switch, because the dental model's output head (`head.1`) must stay dense. SST's
+   only CNN result (ConvNeXt-S) comes from an analytical model, so a measured CNN segmentation model on a board is
+   new data rather than a repeat.
+2. **A sparse dot-product instruction (idea from item 1, open question).** Six of the seven inner-loop instructions
+   are address arithmetic and loads, so the question is whether 2:4 can cut data movement inside the core. One 2:4
+   group (two s8 non-zeros and two 2-bit indices) takes 20 bits, so a 32-bit register holds only one group: an
+   `sdot4 rd, rs1, rs2` with four u8 activations in `rs1` and one group in `rs2` stores weights 1.6x smaller but
+   needs as many weight loads and instructions as `dot4`. Saving instructions needs two groups per instruction, for
+   example four non-zero weights in one register and their indices in a third source register (R4-type) or a
+   per-tile index register. The golden model measures both forms on `head.0.block.3` with the dental 2:4 mask,
+   including the cost of unpacking indices, and compares them with `dot4` in instruction count; the RTL joins the
+   shared INT8 / INT4 dot unit (item 1 of the Duet / MFSA section) only if the count drops.
+3. **One N:M level per layer (from ELSA, Huang et al., CVPRW 2024).** ELSA picks each layer's sparsity from the set
+   the accelerator supports ({1:4, 2:4, 4:4}); DeiT-B goes from 17.6 to 6.0 GFLOPs at 81.8% to 81.4% accuracy, against
+   9.2 GFLOPs at 81.6% for uniform 2:4. Here, the coprocessor supports the same three levels, and the dental project
+   measures each layer's sensitivity to 1:4 on the CV folds (planned in `~/YOLOv8/EXPERIMENTS.md`, to-do list). It
+   is an input to the design space, not a deployment change.
+4. **Tiles sized by a memory predictor (from MAFAT, Farley and Gerstlauer, IESS 2022).** MAFAT predicts a tile's
+   memory as scratch + output + 2 x input and searches fusing cuts and tile counts until the prediction fits the
+   limit; on a Raspberry Pi 3 with 16 MB it is 2.78x faster than the untiled run and within 6% of the best measured
+   setting. Here, the same predictor picks the tiles for the one-layer board run in December (Nexys A7, 32 KiB data
+   memory, a 512 x 512 layer), so tile sizes are computed before the run rather than found by trial on the board.
+   Later, on the ZedBoard, consecutive layers are fused to keep intermediate maps out of DDR3. MAFAT was tested only
+   on YOLOv2; the U-Net adds skip connections whose encoder maps must stay alive until the decoder uses them, which
+   MAFAT does not model.
+5. **INT32 partial sums, one requantization (from HMix, Shyam, Nag and John, CF 2026).** HMix is a 16 x 16
+   output-stationary INT8 systolic array on a ZCU106. Its partial sums stay at 32 bits in BRAM until the whole
+   reduction is done, the previous layer's output is added into the partial sum (the residual), and only then is the
+   result requantized to INT8. This is the dental fixed-point rule decided on 2026-11-11 (bias and residual additions
+   keep 8 extra fractional bits, rounded once), so the coprocessor requantizes once, when results drain. Its results
+   table (device, precision, frequency, BRAM / DSP / LUT / FF, FPS, FPS/W, FPS/DSP) is the model for this project's
+   coprocessor table.
+6. **Buffer sizes from an analytical model (from Asymmetric Tile Buffering, DAC 2026, and the FCCM 2024 GEMM
+   paper).** ATB models an output-stationary tile's arithmetic intensity as AI = 2 / (a/T_N + b/T_MC + c/K) under the
+   buffer limit (2a/rho)·T_MC·T_K + 2b·T_K·T_N + c·T_MC·T_N <= S, with a kernel-switch cost (about 50 cycles), and
+   takes performance as min(AI x bandwidth, core efficiency x peak). With INT8 inputs and INT32 outputs (a = b = 1,
+   c = 4 bytes), the output buffer dominates, which favours output stationary. The FCCM 2024 paper (Taka, Gourounas,
+   Gerstlauer, Marculescu, Arora) found that Vitis HLS's automatic buffer mapping used 133% of the URAM and failed
+   place and route, and fixed it with an analytical model of tile sizes and BRAM / URAM mapping that matched exactly.
+   Here, the per-layer cost model takes ATB's form, and the coprocessor's tile sizes and BRAM mapping are computed
+   from it before the RTL is written. The coprocessor's dataflow (weight or output stationary) is chosen with this
+   model instead of being fixed in advance.
+7. **Energy split into compute and data movement (from CoMeFa, Arora et al., FCCM 2022).** CoMeFa adds bit-serial
+   processing elements inside BRAMs; its energy model credits the savings to data movement that no longer happens.
+   Here, the PrimePower split in item 3 of the Duet / DICE section adds bytes moved per layer, so energy can be
+   divided into arithmetic and data movement. CoMeFa itself needs a modified FPGA BRAM, so it is not built; at most
+   it is a modelled point in the coupling comparison.
+8. **Coupling levels and the offload test (from ECE382M.20 Lecture 10 and the accelerators lecture).** The course
+   lists four couplings: a bus-slave accelerator the CPU copies data into; a bus slave fed by a DMA controller; a
+   bus-mastering accelerator with its own DMA; and a cache-coherent accelerator (Zynq ACP). Offloading pays when
+   n(t_CPU - (t_in + t_exec + t_out)) > 0. ACP suits medium-grain tasks, not instruction-level ones. Polling has the
+   lowest latency; interrupts suit coarse tasks, and measured Linux interrupt latency on a Cortex-A9 reached 43 ms
+   under heavy load. Here, coupling point 2 starts as a bus slave with AXI-Lite control registers (start / done,
+   polled) and becomes bus mastering (AXI HP to DDR3) for whole layers; the host program runs bare metal with
+   polling, so the measured t_in and t_out (the Duet-style microbenchmark) are not mixed with OS noise. The course's
+   hardware abstraction layer, where the same C function call runs the software kernel or the accelerator, is the
+   shape of the shared host program planned for 2/20, and double buffering overlaps transfers with compute.
+
+Not taken: Versal AI Engines and Stratix 10 NX tensor blocks (FCCM 2024), the supernet and evolutionary search
+(ELSA; a per-layer sensitivity scan is enough for one model), modified BRAMs (CoMeFa), the 1:3 level (SST), and
+Linux kernel drivers and device trees (Lecture 10; bare metal first).
+
 ## Reused components
 
 Decided on 2026-11-20. The core and the custom-instruction units (`dot4`, `requant`, `max4`) are written from
@@ -341,6 +416,10 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
 
 ## Next steps
 
+- Before the one-layer board run (12/9 to 12/16): a script that picks the tile sizes for the 32 KiB data memory
+  with MAFAT's memory predictor (item 4 of the UT Austin section), so the board run does not search by trial.
+- Golden model of the sparse dot-product instruction in both forms (item 2 of the UT Austin section), compared with
+  `dot4` on `head.0.block.3` with the dental 2:4 mask. It needs no RTL and can be done at any time.
 - Cycle counts, LUT / FF / DSP and Fmax on the FPGA (Nexys A7; Basys3 as a build-only column) with and without
   each instruction.
 - An accumulating `dot4` and post-increment loads, to measure how much of the 7-to-3 instruction reduction is real.
@@ -365,9 +444,11 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
   and control); points 1 and 2 compare custom instructions with a coprocessor. Each point is measured for cycles,
   LUT / FF / DSP and Fmax, for how much of the network it can run without new hardware, and, for points 1 and 2
   through the ASIC flow, for energy per MAC (PrimePower). The hand-written
-  coprocessor (decided 2026-11-21, after May, on the ZedBoard) is a small weight-stationary INT8 array (for example
-  8 x 8) that stores 2:4 weights with their metadata in its own buffer and skips the zeros, reading whole layers
-  from DDR3: it compares hand-written RTL with HLS, and it is the first design here where 2:4 can pay off, joining
+  coprocessor (decided 2026-11-21, after May, on the ZedBoard) is a small INT8 array (for example
+  8 x 8; weight or output stationary, chosen with the buffer model in item 6 of the UT Austin section) whose
+  processing elements follow SST (item 1 there): it stores 2:4 weights with their 2-bit indices in its own buffer,
+  skips the zeros, switches to dense for the output head, requantizes once as results drain (HMix, item 5), and
+  reads whole layers from DDR3: it compares hand-written RTL with HLS, and it is the first design here where 2:4 can pay off, joining
   the dental project's INT8 + 2:4 accelerator candidate. A
   per-layer cost model calibrated on these points extends them to latency and energy per panoramic X-ray and to a
   small design-space sweep under one final metric (see "Ideas taken from ReaLLM and Chiplet Cloud"). Planned
