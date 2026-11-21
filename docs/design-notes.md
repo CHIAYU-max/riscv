@@ -390,8 +390,14 @@ paper's later sections and are not checked word for word.
    -0.010 mf Dice for 48.5% fewer effective MACs, passing; the 15 tolerant layers alone end at -1.07 points (CI
    -2.33 to +0.18), just failing, which looks like single-seed noise. So a no-fine-tuning scan does not predict the
    fine-tuned result, and 1:4 has seed-0 FP32 support: the coprocessor keeps the dense, 2:4 and 1:4 modes of item 1
-   (1:4 halves the effective MACs again on the same processing elements). 1:4 with INT8 and seeds 1 to 4 are not
-   tested yet.
+   (1:4 halves the effective MACs again on the same processing elements). 1:4 with INT8 QAT, over five seeds
+   (2026-11-21, `run_nm14_int8.sh`, criterion set before the run), matches dense INT8 on the CV folds: -0.04 points
+   of hit rate (CI -0.88 to +0.81) and -0.005 mf Dice (CI -0.011 to +0.001); against 2:4 with INT8 it is -0.54
+   points (CI -1.25 to +0.18). In the analytical accelerator model (`accel_lowbit.py`, R34/512 five folds, 1 MB
+   SRAM, 12.8 GB/s) a 64 x 64 array takes 140 / 80 / 59 ms for dense / 2:4 / 1:4 at 1.00 / 0.62 / 0.44 of the INT8
+   energy; at 4 GB/s it is memory-bound (217 / 188 / 171 ms), so on a board with slow DRAM 1:4 buys little time
+   over 2:4. 2:4 stays the main candidate (its integer and fixed-point paths are already checked); 1:4 is a
+   run-time mode of the same array.
 4. **Tiles sized by a memory predictor (from MAFAT, Farley and Gerstlauer, IESS 2022).** MAFAT predicts a tile's
    memory as scratch + output + 2 x input and searches fusing cuts and tile counts until the prediction fits the
    limit; on a Raspberry Pi 3 with 16 MB it is 2.78x faster than the untiled run and within 6% of the best measured
