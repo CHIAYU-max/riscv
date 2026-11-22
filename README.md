@@ -297,6 +297,13 @@ The deployed slim-decoder version of the model (since 2026-11-18) has no `head.0
 With its fold-0 weights all five builds pass; `block_nn` and `block_rb` run exactly as many instructions as with
 random weights, `block_ref` 5.0% and `block_dot4` 4.6% more, because their software multiplies (`__mulsi3` for
 the products in `block_ref`, `__muldi3` for requant in both) loop a number of times that depends on the values.
+A tile file from the dental side (a real 8 x 16 input tile of that layer with its halo, 16 output channels and the
+layer's calibrated requant scales) also carries the requantized outputs computed there in PyTorch; `gen_block.py`
+stops unless the golden model's `requant` gives the same 2,048 values, and it does. On that tile `block_dot4`,
+`block_nn` and `block_rb` pass in 2,000,053, 1,263,101 and 528,851 instructions. The core's `requant` (bias
+rounded to an integer, shift up to 31) matches the dental integer model without fractional bias exactly; against
+the dental fixed-point spec of 2026-11-11 (bias with 8 fractional bits, one rounding, up to a 34-bit shift) 0.023%
+of the layer's outputs on 8 real ROIs differ by 1.
 `sw/tile_plan.py --board nexys_a7 --mapping build/map_nexys_a7.json` writes the tile chosen for a board to a
 mapping file, and `make block-iss MAPPING=build/map_nexys_a7.json` builds that tile.
 
