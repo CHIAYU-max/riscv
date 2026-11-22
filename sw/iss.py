@@ -14,8 +14,14 @@ With --profile it counts the instructions executed in each function, using the l
 program's objdump file; libgcc helpers (names starting with "__", e.g. __mulsi3) count toward the
 function that called them, so each function's count includes the work it delegates.
 
+With --refs it counts references per level of the storage hierarchy, as in Table 2 of the Merrimac
+paper (docs/design-notes.md, "Ideas taken from Merrimac and Imagine", item 1): register-file reads
+and writes, data-memory loads and stores (with bytes) and instruction fetches. A register read is a
+source operand the instruction's format uses, other than x0; a write is a result written to rd != x0.
+Stores to TOHOST and I/O are not counted. The sidx index register is internal and not counted.
+
 usage: sw/iss.py build/tests/add.hex [--trace build/trace/add.ref] [--max-steps n]
-                 [--profile build/c/fib.dump]
+                 [--profile build/c/fib.dump] [--refs]
 """
 import argparse
 import bisect
@@ -91,6 +97,7 @@ class RV32I:
         self.idx = 0          # index register of sdot8 (sidx)
         self.pc = 0
         self.trace = []
+        self.refs = None      # with --refs: dict of reference counters
 
     # Memory: RAM at 0, reads elsewhere return 0 (as in tb_core.v)
     def load_word(self, addr):
@@ -125,6 +132,8 @@ class RV32I:
         imm_u = insn & 0xFFFF_F000
         imm_j = sext((insn >> 31 & 1) << 20 | (insn >> 12 & 0xFF) << 12 | (insn >> 20 & 1) << 11 | (insn >> 21 & 0x3FF) << 1, 21)
         next_pc, value = pc + 4, None
+        if self.refs is not None:
+            self.count_refs(insn, op, f3, rd)
 
         if op == 0x37:                                  # LUI
             value = imm_u
@@ -242,6 +251,40 @@ class RV32I:
             self.trace.append(self.retire_line(pc, insn, 0, 0))
         self.pc = next_pc & MASK
 
+    # register sources per opcode: (rs1, rs2, rs3) used or not
+    SRC_REGS = {0x33: (1, 1, 0), 0x23: (1, 1, 0), 0x63: (1, 1, 0), 0x13: (1, 0, 0), 0x03: (1, 0, 0),
+                0x67: (1, 0, 0), 0x37: (0, 0, 0), 0x17: (0, 0, 0), 0x6F: (0, 0, 0), 0x0F: (0, 0, 0),
+                DOT4_OPCODE: (1, 1, 0), SDOT8_OPCODE: (1, 1, 1)}
+
+    def count_refs(self, insn, op, f3, rd):
+        r = self.refs
+        r["fetch"] += 1
+        use = self.SRC_REGS.get(op, (0, 0, 0))
+        if op == DOT4_OPCODE and f3 == SIDX_FUNCT3:
+            use = (1, 0, 0)
+        for used, field in zip(use, (insn >> 15 & 31, insn >> 20 & 31, insn >> 27 & 31)):
+            if used and field:
+                r["reg_read"] += 1
+        if op == 0x03:
+            r["load"] += 1
+            r["load_bytes"] += (1, 2, 4, 0, 1, 2)[f3] if f3 < 6 else 0
+        elif op == 0x23:
+            addr = (self.x[insn >> 15 & 31] + sext((insn >> 25) << 5 | (insn >> 7 & 31), 12)) & MASK
+            if addr < MEM_BYTES:
+                r["store"] += 1
+                r["store_bytes"] += (1, 2, 4)[f3] if f3 < 3 else 0
+        if rd and op not in (0x23, 0x63, 0x0F) and not (op == DOT4_OPCODE and f3 == SIDX_FUNCT3):
+            r["reg_write"] += 1
+
+    def refs_report(self, name):
+        r = self.refs
+        reg, mem = r["reg_read"] + r["reg_write"], r["load"] + r["store"]
+        total = reg + mem
+        share = lambda n: f"{100 * n / total:.1f}%" if total else "-"
+        print(f"refs    {name}: register {reg:,} ({share(reg)}; {r['reg_read']:,} reads, {r['reg_write']:,} writes), "
+              f"data memory {mem:,} ({share(mem)}; {r['load']:,} loads / {r['load_bytes']:,} B, "
+              f"{r['store']:,} stores / {r['store_bytes']:,} B), instruction fetches {r['fetch']:,}")
+
     @staticmethod
     def retire_line(pc, insn, rd, value):
         return f"R pc={pc:08x} insn={insn:08x} rd={rd:02d} val={value:08x}"
@@ -285,11 +328,14 @@ def main():
     parser.add_argument("--dot4", action="store_true", help="also decode the custom-0 instructions (dot4, max4, requant)")
     parser.add_argument("--mul", action="store_true", help="also decode MUL, MULH, MULHSU, MULHU (benchmark baselines only)")
     parser.add_argument("--profile", metavar="DUMP", help="print instructions per function, labels from this objdump file")
+    parser.add_argument("--refs", action="store_true", help="count register-file and data-memory references")
     args = parser.parse_args()
     name = args.name or args.hex.rsplit("/", 1)[-1].removesuffix(".hex")
 
     cpu = RV32I(args.hex, dot4=args.dot4, mul=args.mul)
     profile = Profile(args.profile) if args.profile else None
+    if args.refs:
+        cpu.refs = dict.fromkeys(("fetch", "reg_read", "reg_write", "load", "load_bytes", "store", "store_bytes"), 0)
     steps = 0
     try:
         while steps < args.max_steps:
@@ -312,6 +358,8 @@ def main():
         print(f"{result} {name}: pc 0x{cpu.pc:08x} ({steps} instructions)")
     if profile:
         profile.report()
+    if cpu.refs is not None:
+        cpu.refs_report(name)
     sys.exit(0 if result == "PASS" else 1)
 
 

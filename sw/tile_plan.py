@@ -15,9 +15,15 @@ for every tile). Predicted instructions are printed too: per-tile instructions =
 golden-model runs of block_rb (sw/iss.py). On block_rb they depend almost only on the number of outputs, so the tile
 shape changes the data moved, not the compute.
 
+With --mapping FILE it also writes a mapping file for the board, after Sequoia's per-machine mapping
+specification (docs/design-notes.md, "Ideas taken from Sequoia", item 1): the board's memory tree, the layer, the
+leaf variant, the chosen tile (the first row of the table, i.e. the least data moved) and the options, so the code
+stays the same across boards and `make block-iss MAPPING=FILE` builds that tile. --board picks the memory size
+(nexys_a7 32 KiB, basys3 8 KiB); --mem-kib overrides it.
+
 usage:
   sw/tile_plan.py --calibrate                       # build and run a few shapes, write build/tile_plan_cal.json
-  sw/tile_plan.py [--mem-kib 32] [--h 512 --w 512 --cin 32 --cout 32] [--top 8]
+  sw/tile_plan.py [--board nexys_a7] [--h 512 --w 512 --cin 32 --cout 32] [--top 8] [--mapping build/map.json]
   sw/tile_plan.py --check OH OW COUT                # build that shape and confirm it links and passes
 """
 import argparse
@@ -30,6 +36,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CAL = ROOT / "build" / "tile_plan_cal.json"
 PROGRAM = "block_rb"            # register-blocked convolution with dot4 / requant / max4 (the fastest RV32I build)
+# Memory tree of each board (Sequoia item 1), outermost level first. Only the core's data memory holds tiles today;
+# the host level is the PC behind the UART bridge. The ZedBoard (DDR3 and a coprocessor scratchpad) is added when its
+# bring-up gives real sizes.
+BOARDS = {
+    "nexys_a7": {"mem_kib": 32, "levels": ["host (UART)", "core data memory 32 KiB", "register file"]},
+    "basys3": {"mem_kib": 8, "levels": ["host (UART)", "core data memory 8 KiB", "register file"]},
+}
 CAL_SHAPES = [(4, 4, 8), (4, 8, 8), (8, 8, 8), (4, 4, 16), (8, 4, 16), (8, 8, 4)]
 
 
@@ -125,6 +138,8 @@ def plan(args):
                 moved = tiles * ((oh + 2) * (ow + 2) * args.cin + cout * 9 * args.cin + 8 * cout + (oh // 2) * (ow // 2) * cout)
                 cands.append((moved, tiles * per, oh, ow, cout, need, tiles, per, halo))
     cands.sort()
+    if args.mapping:
+        write_mapping(args, cal, budget, cands)
     macs = args.h * args.w * args.cout * 9 * args.cin
     print(f"layer {args.h}x{args.w}, CIN {args.cin}, COUT {args.cout}: {macs / 1e9:.2f} G MACs; "
           f"data budget {budget} B of {args.mem_kib} KiB (fixed {cal['fixed_bytes']} B, margin {args.margin} B)")
@@ -140,11 +155,35 @@ def plan(args):
     return cands
 
 
+def write_mapping(args, cal, budget, cands):
+    if not cands:
+        raise SystemExit(f"no tile fits {args.mem_kib} KiB; no mapping written")
+    moved, total, oh, ow, cout, need, tiles, per, halo = cands[0]
+    board = BOARDS.get(args.board, {"levels": []})
+    mapping = {
+        "board": args.board, "mem_kib": args.mem_kib, "levels": board["levels"],
+        "layer": {"h": args.h, "w": args.w, "cin": args.cin, "cout": args.cout},
+        "leaf": cal["program"],
+        "tile": {"oh": oh, "ow": ow, "cout": cout, "bytes": need, "tiles": tiles},
+        "criterion": "least bytes moved between host and board",
+        "predicted": {"instr_per_tile": round(per), "layer_instr": round(total), "moved_bytes": moved,
+                      "data_budget_bytes": budget},
+        "options": {"double_buffer": False, "contiguous_copy": False},
+        "block_shape": f"--cin {args.cin} --oh {oh} --ow {ow} --cout {cout}",
+    }
+    out = Path(args.mapping)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(mapping, indent=1) + "\n")
+    print(f"mapping -> {out}: {oh}x{ow}x{cout} tiles of {cal['program']} on {args.board} ({args.mem_kib} KiB)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--check", nargs=3, type=int, metavar=("OH", "OW", "COUT"))
-    ap.add_argument("--mem-kib", type=int, default=32)
+    ap.add_argument("--board", choices=sorted(BOARDS), default="nexys_a7")
+    ap.add_argument("--mem-kib", type=int, help="data memory in KiB (default: the board's)")
+    ap.add_argument("--mapping", metavar="FILE", help="write the board's mapping file (JSON) for the chosen tile")
     ap.add_argument("--margin", type=int, default=256, help="bytes kept free below the stack (default 256)")
     ap.add_argument("--h", type=int, default=512)
     ap.add_argument("--w", type=int, default=512)
@@ -152,6 +191,8 @@ def main():
     ap.add_argument("--cout", type=int, default=32)
     ap.add_argument("--top", type=int, default=8)
     args = ap.parse_args()
+    if args.mem_kib is None:
+        args.mem_kib = BOARDS[args.board]["mem_kib"]
     if args.calibrate:
         calibrate(args.cin)
     elif args.check:
