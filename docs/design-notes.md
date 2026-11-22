@@ -485,6 +485,14 @@ design evaluated on a cycle-accurate simulator, not a built chip. Facts used bel
    and each coupling point: words read or written in the PE registers / accumulators, in the scratchpad and in DDR3,
    with the share of each. The roofline then gets two bandwidth lines (scratchpad and DDR3) instead of one. The event
    counters (5/8) count scratchpad and DDR3 words, so the board run gives the same table as the model.
+   First numbers, for coupling point 1 on the golden model (`make block-refs`, `sw/iss.py --refs`, 2026-11-22):
+   for the 8 x 16 x 16 tile of `head.0.block.3` that `sw/tile_plan.py` picks for the Nexys A7 (589,824 MACs),
+   `block_nn` makes 2.82 M register-file references and 0.31 M data-memory references (9.9%) and loads
+   1.21 MB, 2.05 B per MAC; `block_rb` makes 1.35 M and 0.13 M (8.8%) and loads 0.48 MB, 0.81 B per MAC. The
+   tile itself is 21.8 KB, so even register blocking reads each tile byte from memory about 22 times; this is the
+   traffic a coprocessor with its own buffers removes. Merrimac's applications kept 93.6 to 97.5% of references
+   in the LRFs; the core keeps about 90% in the register file, but its memory references are words loaded one
+   per instruction, not streams. Counts depend only on the shape, not on the weight values.
 2. **A command queue with dependency bits (from Imagine's stream controller).** Instead of single start / done
    registers, the coprocessor takes commands `{op, base, stride, count, buffer}` through a small FIFO (for example 4
    entries), each with a bitmask of the earlier entries it waits for. Two units, DMA and compute, issue from it, so
@@ -497,9 +505,19 @@ design evaluated on a cycle-accurate simulator, not a built chip. Facts used bel
 4. **Skip connections as long-range producer-consumer traffic.** Merrimac keeps short-range reuse in the LRFs and
    long-range reuse in the SRF. In the U-Net, a skip feature map is produced by the encoder and used much later by
    the decoder. The cost model lists skip traffic as its own row and decides per level whether it stays in the
-   scratchpad or goes through DDR3 (to be computed for the dental U-Net). The same applies to fusing the residual add
-   into the convolution: the residual tile must stay in the buffer, the capacity cost Merrimac notes for merged
-   kernels.
+   scratchpad or goes through DDR3. The same applies to fusing the residual add into the convolution: the residual
+   tile must stay in the buffer, the capacity cost Merrimac notes for merged kernels.
+   Computed on 2026-11-22 for the dental U-Net (`skip_traffic.py` in the dental repository, shapes only, INT8,
+   the same tiling model as its `accel_explore.py`): the four skips are 0.26, 0.52, 1.05 and 4.19 MB (6.03 MB, the
+   largest, `stem`, alive across 41 layers), plus 16 ResNet residual identities of up to 1.05 MB. For the deployed
+   slim-decoder model (24.13 G MACs, 22.57 MB of INT8 weights) one 512 x 512 ROI moves 135.6 MB with 512 KB of
+   SRAM, 112.0 MB with 1 MB, 57.5 MB with 4 MB and 44.8 MB with 8 MB. Up to 1 MB no skip can stay on chip, and
+   skips and residuals are 21% of the traffic at 512 KB; keeping everything on chip needs 8.91 MB. The earlier
+   all-or-nothing skip rule missed the residual traffic (8.4 MB at 1 MB, an upper bound).
+   The deployed model has no `head.0.block.3` (its output head is a 1 x 1 convolution at half resolution); the same
+   32-to-32 3 x 3 block is its `decoders.3.block.3` at 256 x 256 (same weight shape, 0.60 G MACs), so whole-layer
+   numbers for the deployed model use 256 x 256: on the Nexys A7, 1,024 tiles of 8 x 16 x 16 and 11.3 MB moved
+   (45.1 MB for the 512 x 512 layer of the main model).
 5. **One bank per lane, no global crossbar.** Each lane of the INT8 array reads only its own scratchpad bank (for
    example a BaseJump 1R1W memory), and the 2:4 selection stays a 4-to-2 mux inside the lane (SST, UT Austin item
    1), so the wiring does not grow with the array.
@@ -563,7 +581,12 @@ compiler are not taken; the program structure is.
 1. **A memory tree and a mapping file per board.** Nexys A7 (32 KiB, no DRAM), Basys3 (8 KiB) and the ZedBoard (DDR3,
    BRAM scratchpad, PE registers) are each described once, and the tiling function (`sw/tile_plan.py`) writes a
    mapping per board and layer: tile sizes, the leaf variant and the options below. The code does not change between
-   boards; this can share a generator with the register table (2/20).
+   boards; this can share a generator with the register table (2/20). Done for the core on 2026-11-22:
+   `sw/tile_plan.py --board nexys_a7|basys3 --mapping FILE` writes the board's memory tree, the layer, the leaf
+   (`block_rb`), the tile with the least data moved and the options (double buffering and contiguous copies, both
+   off until there is a DMA), and `make ... MAPPING=FILE` builds that tile. For `head.0.block.3` at 512 x 512 it
+   picks 8 x 16 x 16 on the Nexys A7 (predicted 530,288 instructions per tile, measured 528,851) and 4 x 8 x 8 on the
+   Basys3 (142.6 MB moved, against 45.1 MB). The ZedBoard entry waits for its bring-up.
 2. **The coupling points as leaf variants of one task.** One tiling (`inner`) drives every leaf: `block_ref`,
    `block_dot4`, `block_rb`, the coprocessor and the hls4ml design. Each coupling point then differs by one line of
    the mapping, so all of them tile the layer the same way and the difference comes only from the leaf (the same aim

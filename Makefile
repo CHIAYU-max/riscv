@@ -181,6 +181,10 @@ BLOCK_DEPS  := sw/c/bench/block.c build/c/block_data.h sw/c/dot4.h sw/c/nnops.h 
 # changes whenever the generator arguments do, so switching back and forth rebuilds the data
 # BLOCK_SHAPE="--oh 8 --ow 8 --cout 8" sets the tile shape (sw/tile_plan.py uses it); BLOCK_SPARSE=1 forces 2:4
 # on random weights (sparse-iss)
+# MAPPING=<file> (sw/tile_plan.py --mapping) takes the tile shape from a board's mapping file
+ifdef MAPPING
+BLOCK_SHAPE := $(shell python3 -c "import json; print(json.load(open('$(MAPPING)'))['block_shape'])")
+endif
 BLOCK_GEN_ARGS := $(if $(BLOCK_WEIGHTS),--weights $(BLOCK_WEIGHTS)) $(BLOCK_SHAPE) $(if $(BLOCK_SPARSE),--sparse24)
 build/c/block_args: FORCE
 	@mkdir -p build/c; echo '$(BLOCK_GEN_ARGS)' | cmp -s - $@ || echo '$(BLOCK_GEN_ARGS)' > $@
@@ -222,6 +226,14 @@ sparse-iss: build/c/block_nn.hex build/c/block_sa.hex build/c/block_sb.hex
 block-iss: $(BLOCK_HEX)
 	@fail=0; for hex in $^; do \
 	    python3 sw/iss.py --dot4 --mul --max-steps $(BLOCK_STEPS) --profile $${hex%.hex}.dump $$hex || fail=1; \
+	done; exit $$fail
+
+# Register-file and data-memory references per build on the golden model (sw/iss.py --refs; Merrimac-style
+# references per level, docs/design-notes.md "Ideas taken from Merrimac and Imagine", item 1)
+block-refs: $(BLOCK_HEX)
+	@fail=0; for hex in $^; do \
+	    out=$$(python3 sw/iss.py --dot4 --mul --refs --max-steps $(BLOCK_STEPS) $$hex) || fail=1; \
+	    echo "$$out" | grep -E '^(refs|FAIL|TIMEOUT|ILLEGAL|BADADDR)'; \
 	done; exit $$fail
 
 # On rv32i_core: block_ref needs only RV32I, block_dot4 also dot4, block_nn and block_rb all three custom instructions
@@ -286,5 +298,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: FORCE lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-test bench bit fmax prog selftest xsim sim clean
+.PHONY: FORCE lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-refs block-test bench bit fmax prog selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf

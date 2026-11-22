@@ -220,6 +220,7 @@ Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
 | `make dot4-test` | `dot4_test` and `conv_dot4` on `rv32i_core` (needs dot4 in the RTL) |
 | `make nnops-test` | `nnops_test` on `rv32i_core` (needs max4 and requant in the RTL) |
 | `make block-iss` | the U-Net block benchmark on the golden model, instructions per phase (below) |
+| `make block-refs` | the same five builds, register-file and data-memory references (`sw/iss.py --refs`) |
 | `make block-test` | the U-Net block benchmark on `rv32i_core` |
 | `make bench` | cycles on the core and instructions on the golden model for each version |
 
@@ -291,6 +292,8 @@ The block can also run with the weights of a trained layer: `sw/export_layer.py`
 stays random, so no image is needed. With the dental U-Net's `head.0.block.3` (32 to 32 channels at 512 x 512,
 one of its most expensive layers; first 8 output channels) all five builds pass on the golden model, with
 instruction counts within 1% of the random-weight ones. The exported weights stay out of the repository.
+`sw/tile_plan.py --board nexys_a7 --mapping build/map_nexys_a7.json` writes the tile chosen for a board to a
+mapping file, and `make block-iss MAPPING=build/map_nexys_a7.json` builds that tile.
 
 Golden-model instruction counts (2026-10-27): `conv_ref` 554,542, `conv_mul` 33,779, `conv_dot4` 9,587,
 so dot4 executes 3.5x fewer instructions than RV32IM and 58x fewer than plain RV32I. Cycle counts on the core
