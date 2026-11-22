@@ -926,6 +926,19 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
   for after May 2027; the UART bridge and control registers from the board test can be reused.
 - Ibex and VexRiscv as measured baselines on the same U-Net block (FPGA, and Ibex through the ASIC flow); see
   "Ideas taken from Ibex, VexRiscv and CFU Playground". After 2/20, no fixed date.
+- A pipelined core, measured for what it changes about `dot4`, not as a sweep of pipeline depths (decided
+  2026-11-22). Depth trade-offs are known (more stages raise Fmax and lose CPI to hazards and branches), and the
+  project's question is coupling, so one pipelined version (5 stages) is built and the other depths are quoted:
+  VexRiscv's Artix-7 table (item 8 of the Ibex section) and, if cheap, Ibex `small` (2 stages) and `maxperf`
+  (3 stages) as extra rows in the baseline comparison above. Measured on the same U-Net block, with and without
+  `dot4`, for the single-cycle and the 5-stage core: cycles, Fmax, LUT / FF / DSP and time per block (cycles /
+  Fmax). The question to answer: does `dot4` (four 8-bit products and their sum) become the critical path of the
+  execute stage? If it does, compare a single-cycle `dot4` (and the Fmax it costs) with a two-cycle `dot4` behind
+  the valid / ready interface, where the core waits as VexRiscv's `CfuPlugin` does; the unit itself should not
+  change, which is the reason its interface follows CFU Playground's (item 6 of the Ibex section). The RVFI
+  wrapper (5/22 to 5/29) matters more here, since retire order and timing are no longer one instruction per
+  cycle. After 2/20, together with the baseline comparison, so that one table answers both the depth and the
+  custom-instruction questions; not before the SOP.
 - Gemmini in simulation (Chipyard, Verilator) as a reference point for the loosely-coupled end, run on the same
   convolution layer for cycle counts. Optional and only if a paper or the SOP needs it: the install is large (many GB
   and a conda environment, with 10 GB of memory in WSL), and it is not this project's own design.
