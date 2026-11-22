@@ -65,7 +65,8 @@ def run(cmd):
 
 def build(oh, ow, cout, cin):
     shape = f"--cin {cin} --oh {oh} --ow {ow} --cout {cout}"
-    run(["make", "-s", f"build/c/{PROGRAM}.hex", f"BLOCK_SHAPE={shape}"])
+    # -B: always rebuild this program; without it a run now and then measured the previous shape's build
+    run(["make", "-s", "-B", f"build/c/{PROGRAM}.hex", f"BLOCK_SHAPE={shape}"])
     sizes = run(["riscv64-unknown-elf-size", "-A", f"build/c/{PROGRAM}.elf"])
     total = sum(int(m.group(1)) for m in re.finditer(r"^\.(?:text|data|rodata|bss|sdata|sbss|srodata)\S*\s+(\d+)", sizes, re.M))
     out = run(["python3", "sw/iss.py", "--dot4", "--max-steps", "50000000", f"build/c/{PROGRAM}.hex"])

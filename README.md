@@ -292,6 +292,11 @@ The block can also run with the weights of a trained layer: `sw/export_layer.py`
 stays random, so no image is needed. With the dental U-Net's `head.0.block.3` (32 to 32 channels at 512 x 512,
 one of its most expensive layers; first 8 output channels) all five builds pass on the golden model, with
 instruction counts within 1% of the random-weight ones. The exported weights stay out of the repository.
+The deployed slim-decoder version of the model (since 2026-11-18) has no `head.0.block.3`; its layer with the same
+32-to-32 3x3 shape is `decoders.3.block.3` at 256 x 256 (`--conv decoders.3.block.3 --bn decoders.3.block.4`).
+With its fold-0 weights all five builds pass; `block_nn` and `block_rb` run exactly as many instructions as with
+random weights, `block_ref` 5.0% and `block_dot4` 4.6% more, because their software multiplies (`__mulsi3` for
+the products in `block_ref`, `__muldi3` for requant in both) loop a number of times that depends on the values.
 `sw/tile_plan.py --board nexys_a7 --mapping build/map_nexys_a7.json` writes the tile chosen for a board to a
 mapping file, and `make block-iss MAPPING=build/map_nexys_a7.json` builds that tile.
 
