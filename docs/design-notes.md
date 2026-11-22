@@ -511,6 +511,39 @@ not need it), the cache next to the SRF, VLIW kernel microcode and the stream co
 (it makes memory latency depend on the access mix; this project keeps a simple in-order DMA so that board and
 simulation cycle counts can match).
 
+## Ideas taken from HPS
+
+Reviewed on 2026-11-22 from the full papers (Patt, Hwu and Shebanow, "HPS, A New Microarchitecture: Rationale and
+Introduction", and Patt, Melvin, Hwu and Shebanow, "Critical Issues Regarding HPS", both MICRO 1985) and the 2014
+IEEE Micro retrospective. HPS (High Performance Substrate) is a restricted-dataflow out-of-order microarchitecture:
+each instruction is decoded into a small dataflow graph of micro-operations, and a Merger joins it to the graph of
+an active window of the instruction stream. The Merger uses a Register Alias Table (a ready bit and a result tag per
+register, a modified Tomasulo algorithm) to resolve dependencies. Nodes wait in small content-addressable node tables
+until their operands arrive, and instructions retire in order, so exceptions stay precise. The retrospective credits
+it as the approach used from the Pentium Pro on. The whole engine is not taken: the core is single-cycle, and
+renaming, node tables and repair do not serve this project's accelerator question. Three ideas are taken:
+
+1. **The three tiers as the frame of the coupling comparison.** HPS argues for large-grain dataflow at the top,
+   sequential control flow in the middle (the ISA) and fine-grain dataflow at the bottom. The three coupling points
+   sit on the same scale: the hls4ml `io_stream` design is dataflow, the core with `dot4` is sequential control flow,
+   and the coprocessor with a command queue (Merrimac and Imagine, item 2) is coarse-grain dataflow driven by a
+   sequential host. The comparison measures where control flow should hand over to dataflow for this workload.
+2. **Non-blocking long-latency instructions (later).** If `dot4` or a coprocessor command takes several cycles, the
+   simplest core stalls until it is done. A busy bit per destination register, set when the instruction issues and
+   cleared when its result arrives, lets later instructions that do not read that register keep issuing. This is the
+   ready-bit half of the HPS Register Alias Table, without renaming; the HPS paper notes that such schemes still stall
+   on a true dependency, which is acceptable here. Blocking and non-blocking versions of the same instruction become
+   one more point in the coupling comparison, next to the RoCC-style variant (Chipyard item 2). Only worth doing once
+   the valid / ready `dot4` is multi-cycle.
+3. **Checking at the retire point.** HPS keeps out-of-order execution correct by committing state in order at
+   retirement. The golden-model comparison already uses the `retire_*` ports; they stay the single comparison point
+   if the core is later pipelined, gets non-blocking instructions or the board retire signature (FireSim item 1), so
+   the checker does not change with the microarchitecture.
+
+Not taken: register renaming, node tables and tag broadcast (the coprocessor's queue uses Imagine-style dependency
+bitmasks), the node cache, branch prediction and repair, the Memory Alias Table and write buffer, and an
+out-of-order core in general.
+
 ## Reused components
 
 Decided on 2026-11-20. The core and the custom-instruction units (`dot4`, `requant`, `max4`) are written from
