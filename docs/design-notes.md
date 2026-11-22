@@ -620,58 +620,104 @@ processing units (there is one coprocessor), `gather` / `ichop` (2:4 indices are
 
 ## Ideas taken from PULP and CVA6
 
-Reviewed on 2026-11-22 from the projects' documentation and what is known of their papers (XpulpNN, PULP-NN, DORY,
-HWPE, CORE-V-XIF); the papers are still to be re-read before any number from them is quoted. PULP (ETH Zurich and
-the University of Bologna) is a family of RISC-V cores, clusters and accelerators for low-power inference; CVA6
-(OpenHW Group) is a 6-stage, 64-bit, Linux-capable application core. Neither core fits this project: CVA6 is far
-larger than a single-cycle RV32I core and does not fit the ZedBoard's PL comfortably, and RI5CY / CV32E40P is the
-kind of core this project writes itself. Their instruction sets, interfaces and verification methods do apply.
+Reviewed on 2026-11-22 and checked the same day against the sources: XpulpNN (Garofalo et al., IEEE TETC 2021,
+arXiv 2011.14325, read through the ar5iv HTML; the DATE 2020 version could not be fetched), PULP-NN (Garofalo et
+al., Phil. Trans. R. Soc. A 2020, arXiv 1908.11263, first half read verbatim), DORY (Burrello et al., IEEE TC,
+arXiv 2008.07127, tiling section read verbatim), Flex-V (Nadalini et al., arXiv 2307.01056), the CV32E40P user
+manual (instruction set extensions), the HWPE documentation and `hwpe_ctrl_package.sv`, the NE16 and NEureka
+READMEs, the Siracusa abstract (arXiv 2312.14750), the CORE-V-XIF specification v1.0.0, and CVA6's README,
+`config_pkg.sv`, `perf_counters.sv` and `verif/README.md`. Points the sources did not settle are marked as
+unchecked.
 
-1. **XpulpV2 / XpulpNN as the reference for `dot4`, `dot8` and `requant`.** XpulpV2's packed dot products
-   (`pv.sdotsp.b` signed x signed, `pv.sdotup.b` unsigned x unsigned, `pv.sdotusp.b` unsigned x signed) accumulate
-   into `rd`, and `p.clip` / `p.clipu` saturate to a power-of-two range; XpulpNN adds 4-bit (nibble) and 2-bit
-   (crumb) versions. The README places `dot4` (u8 x s8) and `dot8` (INT4) next to these, and the accumulating `dot4`
-   in "Next steps" follows the same `rd += ...` form. Their reported speedups are quoted only after re-reading the
-   papers and only with their baseline (their compiler, their core and their kernels differ from the golden-model
-   instruction counts here).
-2. **Hardware loops and post-increment loads as the next candidates, chosen by counting.** XpulpV2's `lp.setup`
-   removes the branch and counter update of an inner loop and `p.lb rd, imm(rs1!)` folds the address increment into
-   the load. Before adding either, the U-Net block benchmark counts how many of its instructions are address
-   additions, loop counters and branches in the inner loops; that share bounds what the two can save (the
-   post-increment load is already in "Next steps").
-3. **MacLoad as a point between the two couplings.** XpulpNN's MacLoad loads the next operand while the dot product
-   runs, a step from a pure instruction extension toward a coprocessor that streams its operands. It is a reference
-   for the coupling comparison, not something to build.
-4. **PULP-NN and DORY for tiling and requantization.** PULP-NN uses HWC layout and requantizes with a multiplier and
-   a shift; DORY picks tile sizes for each memory level by solving a constraint problem over buffer sizes and data
-   moved. The `requant` golden model is checked against the PULP-NN form, and `sw/tile_plan.py` (Sequoia, item 1)
-   is compared with DORY's formulation: the same objective (data moved) under the same constraint (the scratchpad
-   size), so the tile for the board run is justified, not found by trial.
-5. **The HWPE template for the coprocessor's control.** PULP's hardware processing engines share one control block
-   (hwpe-ctrl): a register file with a job-independent part and job-dependent registers, a trigger register, a
-   status / done register and a small job queue, and streamers (hwpe-stream) that turn address patterns into
-   valid / ready streams from a shared scratchpad. The register table (2/20) follows this split, and the streamers
-   are the model for the DMA descriptors (Sequoia, item 4). NE16 and NEureka, PULP's INT8 convolution engines, are
-   the closest published designs to the hand-written coprocessor and are listed as related work for it.
-6. **CORE-V-XIF as the shape of the `dot4` handshake.** OpenHW's eXtension Interface, implemented in CVA6 with
-   `cvxif_example_coprocessor`, splits an offloaded instruction into an issue handshake (the unit says whether it
-   accepts the instruction and whether it writes `rd`), a commit signal and a result handshake. The `dot4` valid /
-   ready interface (11/26 to 11/27) uses the same issue / result split without the full interface, so a multi-cycle
-   unit, the hls4ml design or the coprocessor can sit behind it later without changing the core's side.
-7. **core-v-verif's step-and-compare for the random tests.** CVA6 and CV32E40P are verified by running riscv-dv
-   random programs and comparing every retired instruction with Spike. The `retire_*` ports are compared with the
-   golden model in the same way (instruction by instruction, not only the final memory), and riscv-arch-test is a
-   second acceptance step after rv32ui passes.
-8. **One configuration package.** CVA6 selects its features through one configuration package. The switch for
-   `dot4` (11/29) and the ASIC configuration file (5/1) are parameters in one package read by both the RTL and the
-   scripts, not scattered `define`s.
-9. **Standard HPM counters.** CVA6 exposes its events through `mhpmcounter` / `mhpmevent` CSRs. The event counters
-   (5/8) use the standard CSR numbers and event-select form, so the same C code reads them on every build.
+PULP (ETH Zurich and the University of Bologna) is a family of RISC-V cores, clusters and accelerators for low-power
+inference. CVA6 (OpenHW Group) is "a 6-stage, single-issue, in-order CPU" implementing RV64 (32-bit configurations
+such as cv32a60x, RV32IMC, also exist), and its application-class configurations boot Linux. Neither core is taken:
+CVA6 is far larger than a single-cycle RV32I core, and RI5CY / CV32E40P is the kind of core this project writes
+itself. Their instruction sets, interfaces and verification methods do apply.
+
+1. **XpulpV2 / XpulpNN as the reference for `dot4`, `dot8` and `requant`.** The packed dot products come in six
+   forms: `dotup` / `dotusp` / `dotsp` write `rD = rs1 . op2`, and `sdotup` / `sdotusp` / `sdotsp` add the sum into
+   `rD` (the leading `s` means accumulate, not signed). In the suffix the first letter is `rs1` and the second
+   `op2`: `usp` is unsigned `rs1` x signed `op2`, the same split as `dot4`. RI5CY wrote them `pv.sdotsp.b`, ...;
+   CV32E40P v2 renamed the PULP instructions to `cv.*` (`cv.sdotusp.b`). `cv.clip rD, rs1, I` saturates to
+   [-2^(I-1), 2^(I-1) - 1] and `cv.clipu` to [0, 2^(I-1) - 1], so an unsigned 8-bit clip needs I = 9. XpulpNN adds
+   nibble (`.n`, eight 4-bit elements) and crumb (`.c`, sixteen 2-bit elements) versions of the dot products and
+   of add, sub, avg, max, min, shifts and abs; its requantization is one MAC, one shift and one clip per
+   accumulator (`y = m . phi >> d`), the same form as `requant`. Its results come from a post-layout 8-core RI5CY
+   cluster in 22 nm FDX: 4- and 2-bit kernels run "6x and 8x faster" than a cluster with only 8-bit SIMD, with a
+   peak of 2.22 TOPS/W. These are cluster numbers with their own compiler and kernels, so they are quoted only
+   with that context, next to this project's golden-model counts (`dot8` gives 1.71x to 1.76x fewer instructions,
+   not 2x, because address arithmetic and `requant` do not shrink).
+2. **Hardware loops and post-increment loads as the next candidates, chosen by counting.** XpulpV2's kernels use
+   "hardware loops (lp.setup), load with post-increment (p.lw) and the SIMD sdotp". CV32E40P has two loop levels
+   (`cv.setup L, rs1, uimm`, `cv.setupi`, and long forms `cv.starti` / `cv.endi` / `cv.count`) and post-increment
+   loads `cv.lb rD, (rs1), Imm` (`rD = Mem8(rs1); rs1 += Imm`; if `rD == rs1`, the loaded value wins). PULP-NN's
+   INT8 inner loop loads four words and runs four `sdotp4` into four accumulators, 16 MACs per four loads. Before
+   adding either instruction, the U-Net block benchmark counts how many inner-loop instructions are address
+   additions, loop counters and branches; that share bounds what the two can save (the post-increment load is
+   already in "Next steps").
+3. **Mac&Load as a point between the two couplings.** XpulpNN's mac&load instructions keep activations and weights
+   in a small separate register file (NN-RF; four registers, later two more for activations) and, in the same
+   instruction as the dot product, load the next word into one NN-RF register from the address in `rs1`, which is
+   post-incremented; the final `nn_sdotp` selects the registers and the update with a 5-bit immediate. The paper
+   reports up to 1.64x peak MAC / cycle from this. Flex-V extends it to mixed 8 / 4 / 2-bit formats set by CSRs,
+   with a six-register NN-RF and a controller that generates the addresses. This is the "stateful functional unit"
+   step already listed as a future extension: a reference for the coupling comparison, not something to build now.
+4. **PULP-NN and DORY for layout and tiling.** PULP-NN uses HWC layout because it makes im2col cheaper than CHW and
+   splits the work across cores along the output's spatial dimension; INT8 outputs are scaled and clamped as in
+   CMSIS-NN, and sub-byte outputs use per-channel thresholds. DORY solves tiling as a constraint program with
+   Google OR-Tools: it maximizes L1 utilization (input + output + weight tiles), keeps those tiles plus the
+   kernel's own buffers under half of L1, and adds weighted heuristics that favour tile shapes matching the
+   PULP-NN kernel (output channels a multiple of 4, width a multiple of 2, rows balanced over 8 cores). Its
+   objective differs from `sw/tile_plan.py`, which picks the tile with the least data moved; both are computed for
+   the board layer (`decoders.3.block.3`) and the difference is reported, so the choice of tile is argued, not
+   assumed.
+5. **The HWPE control block for the coprocessor's registers.** PULP's hardware processing engines share one
+   control block (hwpe-ctrl) with eight mandatory registers (`TRIGGER`, `ACQUIRE`, `FINISHED`, `STATUS`,
+   `RUNNING`, `SOFTCLEAR`, one reserved, `SWEVT`), then the engine's own registers, with two job contexts by
+   default (up to eight) so a job can be queued while one runs; control is memory-mapped. The register table
+   (`sw/regs/regs.json`, 2/20) starts with the same kind of fixed header (start, acquire / queue, done, status,
+   soft clear) before the layer parameters. The exact behaviour of each mandatory register is not described in the
+   files read and is to be checked in `hwpe_ctrl_regif_example.rdl` before copying it. The streamers (hwpe-stream)
+   turn "a 3D strided pattern in TCDM" into valid / ready streams, the model for the DMA descriptors (Sequoia,
+   item 4).
+6. **HWPE-Stream's handshake rules for every valid / ready interface.** Two rules from the HWPE-Stream protocol
+   apply to the `dot4` interface (11/26 to 11/27) and the bus outside the core: "the assertion of valid ... cannot
+   depend combinationally on the state of ready", and valid may drop only in the cycle after a handshake. They go
+   into the testplan as assertions.
+7. **NE16 and NEureka as the closest published accelerators.** Both are HWPE-based convolution engines for PULP
+   clusters: NE16 supports 1x1, 3x3, depthwise and linear layers with 8- or 16-bit activations and 2- to 8-bit
+   weights; NEureka, derived from NE16, supports 1x1, 3x3 and depthwise with 8-bit activations and 2- to 8-bit
+   weights, and is the neural engine (N-EUREKA) of Siracusa, a 16 nm SoC described in a JSSC paper. They are the
+   related work for the hand-written coprocessor; their READMEs do not mention skipping structured-sparse zeros.
+8. **CORE-V-XIF as the shape of the `dot4` handshake.** The eXtension Interface (v1.0.0, ratified) consists of
+   compressed, issue, register, commit and result interfaces. The issue response says whether the instruction is
+   accepted and whether the unit will write back `rd`; the commit interface can kill an issued instruction; the
+   result carries `id`, `rd`, data and a write enable. CVA6 has a `CvxifEn` configuration bit and an example
+   coprocessor in `core/cvxif_example` (what its instructions do was not checked). The `dot4` valid / ready
+   interface uses the same issue / result split, without commit, the register interface or the full parameter set,
+   so a multi-cycle unit, the hls4ml design or the coprocessor can sit behind it later without changing the core's
+   side.
+9. **One configuration structure, as in CVA6.** CVA6's `config_pkg.sv` has a user-facing `cva6_user_cfg_t` (for
+   example `XLEN`, `CvxifEn`) from which the full `cva6_cfg_t` is derived (`NrPMPEntries`, `BTBEntries`,
+   `PerfCounterEn`, ...), and its CI builds 35 named targets under `config/target/`. The switch for `dot4` (11/29)
+   and the ASIC configuration file (5/1) are fields of one package read by the RTL and the scripts, and each
+   measured configuration gets a name.
+10. **Standard HPM counters.** CVA6's `perf_counters.sv` implements `mhpmcounter3`... with a 5-bit event select in
+    `mhpmevent` (for example `5'b00001` is an instruction-cache miss). The event counters (5/8) use the standard CSR
+    numbers and event-select form, so the same C code reads them on every build. How many counters CVA6 has was
+    not checked.
+11. **Simulation against Spike, for comparison with this project's checks.** CVA6's regression runs riscv-tests and
+    riscv-dv programs on its Verilator test harness and on Spike (`DV_SIMULATORS=veri-testharness,spike`), and the
+    core has an RVFI port (`cva6_rvfi.sv`). Whether the comparison is per instruction (step-and-compare) was not
+    checked. This project already compares the `retire_*` ports with its own golden model per instruction and
+    keeps that; riscv-arch-test is added as a second acceptance step after rv32ui on its own merits (it is not in
+    CVA6's README).
 
 Not taken: the CVA6 and CV32E40P RTL, the PULP cluster and its interconnect, Snitch's stream semantic registers and
-FREP (kept as related work for the coupling comparison), common_cells (it overlaps BaseJump STL, see "Reused
-components"), Bender (git submodules are used instead), and the full CORE-V-XIF. pulp-platform's `axi` library and
-its test classes are a reference to read when the ZedBoard's AXI-Lite slave is written, not a dependency.
+FREP (related work for the coupling comparison), common_cells (it overlaps BaseJump STL, see "Reused components"),
+Bender (git submodules are used instead), the full CORE-V-XIF, and DORY's tool itself. pulp-platform's `axi`
+library is a reference to read when the ZedBoard's AXI-Lite slave is written, not a dependency.
 
 ## Reused components
 
