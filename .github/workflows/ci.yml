@@ -12,11 +12,21 @@ jobs:
         with:
           submodules: true
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y iverilog gcc-riscv64-unknown-elf
+        run: sudo apt-get update && sudo apt-get install -y iverilog verilator gcc-riscv64-unknown-elf
       - name: Golden model (sw/iss.py) on every test and C program
         run: make iss-test
       - name: Random programs on the golden model (checks sw/gen_random.py)
         run: make random-iss RAND_COUNT=20 && make random-iss RAND_COUNT=20 RAND_SEED=1000 CUSTOM=1
+      - name: Verilator lint of the core
+        # While the core is being written: WIP=1 (unused-signal / unused-parameter warnings hidden) must be
+        # clean, and the full -Wall lint only reports. With rtl/.core-ready the full lint has to pass.
+        run: |
+          if [ -f rtl/.core-ready ]; then
+            make lint
+          else
+            make lint WIP=1
+            make lint || echo "full lint not clean yet (reporting only until rtl/.core-ready)"
+          fi
       - name: Testbench self-test
         run: make selftest
       - name: riscv-tests (rv32ui) and C programs
