@@ -758,8 +758,11 @@ Reviewed on 2026-11-22 and checked the same day against the sources: Ibex's READ
 `ibex_configs.yaml`, `rtl/ibex_tracer.sv` and `examples/simple_system/README.md`; VexRiscv's README (including the
 area table and the "Add a custom instruction" section); CFU Playground's README and its overview and interface pages
 (cfu-playground.readthedocs.io); and the README and `spec/intro.adoc` of the proposed Composable Custom Extensions
-(github.com/grayresearch/CX). Not read: Ibex's `ibex_top_tracing.sv`, CFU Playground's `python/amaranth_cfu` source,
-and the CX specification PDF; points that depend on them are marked as unchecked.
+(github.com/grayresearch/CX). Item 6 was checked later the same day against the source: CFU Playground's
+`proj/proj_template_v/cfu.v`, `python/amaranth_cfu/cfu.py` and `common/src/cfu.h`, and VexRiscv's
+`src/main/scala/vexriscv/plugin/CfuPlugin.scala` (branch `master`). Not read: Ibex's `ibex_top_tracing.sv`, CFU
+Playground's `riscv.h` and SoC-side encoding setup, and the CX specification PDF; points that depend on them are
+marked as unchecked.
 
 Ibex (lowRISC) is a small RV32I / RV32E core (with optional M, C and B) in SystemVerilog: the `small` configuration
 in `ibex_configs.yaml` is a "Two-stage pipeline" (`WritebackStage : 0`), `maxperf` a "Three-stage pipeline".
@@ -799,12 +802,40 @@ Scala. Their structure, test harness and interfaces do apply.
    a results table points to one file.
 6. **The CFU Playground interface as a reference for the `dot4` handshake (11/26 to 11/27).** "When the CPU
    executes that op code, it passes the contents of two registers to the CFU, waits for a response and puts the
-   result back into a third register." Its interface page names a command side (`cmd_valid`, `cmd_function`,
-   `cmd_inputs_0`, `cmd_inputs_1`) and a response side (`rsp_valid`, `rsp_ready`, `rsp_outputs_0`). The valid /
-   ready interface of `dot4` uses the same split: a command with a function field and two operands, and a response
-   with one result, each with its own handshake, so the unit could later sit behind a CFU-style port without a new
-   design. Not checked: the exact Verilog port names, the width of the function field and how it maps to funct3 /
-   funct7 (the source under `python/amaranth_cfu` has them).
+   result back into a third register." The Verilog template (`proj/proj_template_v/cfu.v`, `module Cfu`) has
+   these ports:
+
+   | Port | Direction | Width |
+   | --- | --- | --- |
+   | `cmd_valid` | in | 1 |
+   | `cmd_ready` | out | 1 |
+   | `cmd_payload_function_id` | in | 10 |
+   | `cmd_payload_inputs_0`, `cmd_payload_inputs_1` | in | 32 each |
+   | `rsp_valid` | out | 1 |
+   | `rsp_ready` | in | 1 |
+   | `rsp_payload_outputs_0` | out | 32 |
+   | `reset`, `clk` | in | 1 |
+
+   The 10-bit function ID is {funct7, funct3}: the Amaranth base class (`python/amaranth_cfu/cfu.py`) takes funct3
+   from bits [2:0] and funct7 from bits [9:3]. `common/src/cfu.h` encodes the instructions as R-type on custom-0
+   (`opcode_R(CUSTOM0, funct3, funct7, rs1, rs2)`); `cfu_op0` to `cfu_op7` fix funct3 = 0 to 7 and the caller
+   gives funct7. The value of `CUSTOM0` and the bit layout of `opcode_R` are in `riscv.h`, which was not read.
+
+   Handshake: the template, a combinational CFU, ties `rsp_valid = cmd_valid` and `cmd_ready = rsp_ready`
+   ("Trivial handshaking for a combinational CFU"). The Amaranth class keeps `cmd_ready` at 1 while it waits for a
+   command, raises `rsp_valid` when the instruction is done, and if `rsp_ready` is low it stores the result and
+   holds `rsp_valid` until the CPU takes it ("Instruction has completed, but the CPU isn't ready to receive the
+   result"). On the CPU side, VexRiscv's `CfuPlugin` stalls while `cmd_valid && !cmd_ready` and until `rsp_valid`;
+   `rsp_ready` is not tied to 1 but is `!arbitration.isStuckByOthers`. Which instruction bits form the function ID
+   is a plugin parameter (`encodings`, each a masked literal and bit ranges), not fixed in that file; how CFU
+   Playground's SoC sets it was not read.
+
+   This project's encoding already matches: `dot4`, `max4` and `requant` are R-type on custom-0 (`0001011`) with
+   funct7 = 0 and funct3 = 0, 1 and 2 (`sw/iss.py`), which are CFU function IDs 0, 1 and 2. The valid / ready
+   interface of `dot4` (11/26 to 11/27) takes the same eight signals: a command with a function ID and two
+   operands, a response with one result, each with its own handshake. The single-cycle core can tie `rsp_ready` to
+   1, but the unit keeps the "result waiting" state of the Amaranth class, so it needs no change behind a pipelined
+   core or a bus.
 7. **CFU Playground and the CX proposal as related work for the coupling comparison.** CFU Playground is the
    closest published example of the tightly coupled point (custom instructions in a soft core, on an Artix-7 board,
    for TFLM kernels). The difference to state in the SOP and README: here the core is written from scratch, the
