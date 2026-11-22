@@ -44,6 +44,8 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
 - Imagine and Merrimac (Stanford) are stream processors: kernels read operands from local registers, streams
   between kernels stay in a software-managed stream register file, and a host issues coarse stream instructions
   (load a stream, run a kernel) instead of single operations.
+- Sequoia (Stanford) is a programming model for explicit memory hierarchies: a machine is a tree of memories, a
+  program a hierarchy of tasks whose block sizes are set per machine in a separate mapping file.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -543,6 +545,46 @@ renaming, node tables and repair do not serve this project's accelerator questio
 Not taken: register renaming, node tables and tag broadcast (the coprocessor's queue uses Imagine-style dependency
 bitmasks), the node cache, branch prediction and repair, the Memory Alias Table and write buffer, and an
 out-of-order core in general.
+
+## Ideas taken from Sequoia
+
+Reviewed on 2026-11-22 from the full paper (Fatahalian et al., "Sequoia: Programming the Memory Hierarchy", SC'06,
+Stanford; Dally and Erez among the authors). Sequoia models a machine as a tree of memory modules (Cell: main memory
+and eight 256 KB local stores) and a program as a hierarchy of tasks: side-effect-free functions with
+call-by-value-result arguments whose whole working set must fit in one memory module. `inner` variants only split
+their arguments into blocks and call subtasks; `leaf` variants compute, usually wrapping a platform kernel in C.
+Block sizes are `tunable` parameters left unbound in the source; a separate mapping specification per machine picks,
+for each level, the variant, the tunable values and options such as double buffering (`software-pipeline`) and
+copying blocks into contiguous buffers. `rchop(A, offset, len, stride)` cuts possibly overlapping blocks. Its
+benchmarks include `ITERCONV2D` (a 9 x 9 convolution), results are split into leaf compute, waiting on memory and
+overhead, and the paper says the model suits regular programs only, which the U-Net is. The language and its
+compiler are not taken; the program structure is.
+
+1. **A memory tree and a mapping file per board.** Nexys A7 (32 KiB, no DRAM), Basys3 (8 KiB) and the ZedBoard (DDR3,
+   BRAM scratchpad, PE registers) are each described once, and the tiling function (`sw/tile_plan.py`) writes a
+   mapping per board and layer: tile sizes, the leaf variant and the options below. The code does not change between
+   boards; this can share a generator with the register table (2/20).
+2. **The coupling points as leaf variants of one task.** One tiling (`inner`) drives every leaf: `block_ref`,
+   `block_dot4`, `block_rb`, the coprocessor and the hls4ml design. Each coupling point then differs by one line of
+   the mapping, so all of them tile the layer the same way and the difference comes only from the leaf (the same aim
+   as the hardware abstraction layer in the UT Austin section, item 8).
+3. **Call-by-value-result as the coprocessor's command semantics.** A command is a task call: its input blocks are
+   copied into the scratchpad, its output blocks are copied back when it is done, the host does not touch that
+   scratchpad region while it runs, and output blocks of commands in flight do not overlap. No coherence is needed,
+   and this fixes the boundary for a later shared-SRAM partition (CacheFlex, item 4) and the meaning of the command
+   queue (Merrimac and Imagine, item 2).
+4. **Halo tiles as `rchop` blocks.** The DMA descriptor carries offset, length and stride per dimension, which
+   describes the overlapping input tiles of a 3 x 3 convolution (with the 2-D strided mode in Merrimac item 6).
+5. **Double buffering and contiguous copies as mapping options.** Both are switched in the mapping, not in the code,
+   and measured on and off.
+6. **Time split three ways.** The event counters (5/8) report leaf compute, waiting on memory and overhead (command
+   issue, synchronization) for each coupling point, as in Figure 11 of the paper; the Duet-style microbenchmark
+   measures the overhead part.
+7. **The tunables as the search space.** The design-space sweep uses the mapping's parameters (tile sizes, array
+   size, scratchpad size, reuse factor) as its variables.
+
+Not taken: the Sequoia language and compiler, virtual levels and clusters, MPI, parallel `mappar` over many
+processing units (there is one coprocessor), `gather` / `ichop` (2:4 indices are stored with the weights).
 
 ## Reused components
 
