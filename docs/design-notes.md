@@ -505,9 +505,19 @@ design evaluated on a cycle-accurate simulator, not a built chip. Facts used bel
 4. **Skip connections as long-range producer-consumer traffic.** Merrimac keeps short-range reuse in the LRFs and
    long-range reuse in the SRF. In the U-Net, a skip feature map is produced by the encoder and used much later by
    the decoder. The cost model lists skip traffic as its own row and decides per level whether it stays in the
-   scratchpad or goes through DDR3 (to be computed for the dental U-Net). The same applies to fusing the residual add
-   into the convolution: the residual tile must stay in the buffer, the capacity cost Merrimac notes for merged
-   kernels.
+   scratchpad or goes through DDR3. The same applies to fusing the residual add into the convolution: the residual
+   tile must stay in the buffer, the capacity cost Merrimac notes for merged kernels.
+   Computed on 2026-11-22 for the dental U-Net (`skip_traffic.py` in the dental repository, shapes only, INT8,
+   the same tiling model as its `accel_explore.py`): the four skips are 0.26, 0.52, 1.05 and 4.19 MB (6.03 MB, the
+   largest, `stem`, alive across 41 layers), plus 16 ResNet residual identities of up to 1.05 MB. For the deployed
+   slim-decoder model (24.13 G MACs, 22.57 MB of INT8 weights) one 512 x 512 ROI moves 135.6 MB with 512 KB of
+   SRAM, 112.0 MB with 1 MB, 57.5 MB with 4 MB and 44.8 MB with 8 MB. Up to 1 MB no skip can stay on chip, and
+   skips and residuals are 21% of the traffic at 512 KB; keeping everything on chip needs 8.91 MB. The earlier
+   all-or-nothing skip rule missed the residual traffic (8.4 MB at 1 MB, an upper bound).
+   The deployed model has no `head.0.block.3` (its output head is a 1 x 1 convolution at half resolution); the same
+   32-to-32 3 x 3 block is its `decoders.3.block.3` at 256 x 256 (same weight shape, 0.60 G MACs), so whole-layer
+   numbers for the deployed model use 256 x 256: on the Nexys A7, 1,024 tiles of 8 x 16 x 16 and 11.3 MB moved
+   (45.1 MB for the 512 x 512 layer of the main model).
 5. **One bank per lane, no global crossbar.** Each lane of the INT8 array reads only its own scratchpad bank (for
    example a BaseJump 1R1W memory), and the 2:4 selection stays a 4-to-2 mux inside the lane (SST, UT Austin item
    1), so the wiring does not grow with the array.
