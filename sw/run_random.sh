@@ -2,18 +2,21 @@
 # Random-program tests: generate programs with sw/gen_random.py, build them, and either run them on the
 # golden model alone (checks the generator) or compare the core's trace with the golden model's.
 #
-# usage: sw/run_random.sh [--sim <vvp image>] [--custom] [--seed <first>] [--count <n>] [--length <n>]
+# usage: sw/run_random.sh [--sim <vvp image> | --spike] [--custom] [--seed <first>] [--count <n>] [--length <n>]
 #   without --sim   each program must PASS on sw/iss.py
+#   with --spike    each program runs on Spike (sw/spike_trace.py) and on sw/iss.py, and every retired
+#                   instruction and store is compared (checks the golden model; not with --custom)
 #   with --sim      each program runs on the core and on sw/iss.py, and sw/trace_diff.py compares them
 #                   (stores and the final register signature; also every retired instruction when the
 #                   image was built with -DRETIRE_TRACE, i.e. build/sim_core_retire)
 # Exits non-zero if any program fails; the failing seeds are listed, and build/random/rand_<seed>.*
 # (assembly, dump, traces) are kept for debugging.
 set -u
-sim=""; custom=""; seed=1; count=20; length=300
+sim=""; spike=""; custom=""; seed=1; count=20; length=300
 while [ $# -gt 0 ]; do
     case $1 in
         --sim) sim=$2; shift 2 ;;
+        --spike) spike=1; shift ;;
         --custom) custom=--custom; shift ;;
         --seed) seed=$2; shift 2 ;;
         --count) count=$2; shift 2 ;;
@@ -21,6 +24,10 @@ while [ $# -gt 0 ]; do
         *) echo "unknown option $1"; exit 2 ;;
     esac
 done
+
+if [ -n "$spike" ] && [ -n "$custom" ]; then
+    echo "--spike: Spike does not decode the custom instructions; run without --custom"; exit 2
+fi
 
 prefix=${RISCV_PREFIX:-riscv64-unknown-elf-}
 dir=build/random
@@ -40,6 +47,17 @@ for ((s = seed; s < seed + count; s++)); do
     python3 sw/bin2hex.py $base.bin $base.hex
     ${prefix}objdump -d $base.elf > $base.dump
 
+    if [ -n "$spike" ]; then
+        python3 sw/iss.py $iss_flags $base.hex --trace $base.ref > /dev/null
+        python3 sw/spike_trace.py $base.elf --trace $base.spike --max-steps $(grep -c '^R' $base.ref) > /dev/null
+        if python3 sw/trace_diff.py $base.ref $base.spike --dump $base.dump > $base.diff; then
+            pass=$((pass + 1))
+        else
+            echo "DIFFER  $name (seed $s): $(grep -m1 MISMATCH $base.diff)"
+            failed+=($s)
+        fi
+        continue
+    fi
     if [ -z "$sim" ]; then
         if line=$(python3 sw/iss.py $iss_flags $base.hex); then pass=$((pass + 1)); else echo "$line"; failed+=($s); fi
         continue
@@ -55,7 +73,7 @@ for ((s = seed; s < seed + count; s++)); do
 done
 
 echo "----"
-echo "$pass / $count random programs passed${sim:+ (core vs golden model)}"
+echo "$pass / $count random programs passed${sim:+ (core vs golden model)}${spike:+ (Spike vs golden model)}"
 if [ ${#failed[@]} -gt 0 ]; then
     echo "failed seeds: ${failed[*]}  (details: $dir/rand_<seed>.diff, rerun one with --seed <s> --count 1)"
     exit 1

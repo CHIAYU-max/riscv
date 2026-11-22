@@ -10,6 +10,8 @@
 # make iss-test  run all tests and C programs on the golden model alone (checks sw/iss.py)
 # make random-test [RAND_COUNT=50] [RAND_SEED=1] [CUSTOM=1] [RETIRE=1]   random programs, core vs golden model
 # make random-iss  the same random programs on the golden model alone (checks the generator)
+# make spike-check [RAND_COUNT=50] [RAND_SEED=1]   the golden model against Spike, every retired instruction
+#                and store: rv32ui, the C programs and random programs (base RV32I only; docs/spike.md)
 # make dot4-iss  run the dot4 and max4 / requant tests and both convolution benchmarks on the golden model (--dot4)
 # make dot4-test run the dot4 test and conv_dot4 on rv32i_core (needs dot4 in the RTL)
 # make nnops-test run the max4 / requant test on rv32i_core (needs both in the RTL)
@@ -136,6 +138,12 @@ random-iss:
 
 random-test: $(TRACE_SIM)
 	sw/run_random.sh --sim $(TRACE_SIM) $(RAND_ARGS)
+
+# Golden model against Spike (docs/spike.md): Spike is an independent RV32I reference, so a bug shared
+# by sw/iss.py and the core shows up here. Base RV32I only (no CUSTOM).
+spike-check: $(TEST_HEX) $(C_HEX)
+	sw/spike_check.sh $(TEST_HEX:.hex=.elf) $(C_HEX:.hex=.elf)
+	sw/run_random.sh --spike --seed $(RAND_SEED) --count $(RAND_COUNT) --length $(RAND_LEN)
 
 iss-test: $(TEST_HEX) $(C_HEX)
 	@fail=0; for hex in $^; do python3 sw/iss.py $$hex || fail=1; done; exit $$fail
@@ -308,5 +316,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: FORCE regs regs-test lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-refs block-test bench bit fmax prog selftest xsim sim clean
+.PHONY: FORCE regs regs-test lint progress random-iss random-test spike-check test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-refs block-test bench bit fmax prog selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf
