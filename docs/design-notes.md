@@ -493,7 +493,7 @@ design evaluated on a cycle-accurate simulator, not a built chip. Facts used bel
    traffic a coprocessor with its own buffers removes. Merrimac's applications kept 93.6 to 97.5% of references
    in the LRFs; the core keeps about 90% in the register file, but its memory references are words loaded one
    per instruction, not streams. Counts depend only on the shape, not on the weight values.
-   Split per phase ( with , the deployed layer's weights, 4 x 4 x 8 tile): in 
+   Split per phase (`make block-refs` with `--profile`, the deployed layer's weights, 4 x 4 x 8 tile): in `block_nn`
    the convolution makes 96.6% of the data-memory references (18,712 of 19,374) and requant, pooling and start-up the
    rest, so a coprocessor that takes the convolution and requant (Gemmini item 1) removes almost all of the memory
    traffic the core sees.
