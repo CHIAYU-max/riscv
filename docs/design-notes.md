@@ -493,6 +493,10 @@ design evaluated on a cycle-accurate simulator, not a built chip. Facts used bel
    traffic a coprocessor with its own buffers removes. Merrimac's applications kept 93.6 to 97.5% of references
    in the LRFs; the core keeps about 90% in the register file, but its memory references are words loaded one
    per instruction, not streams. Counts depend only on the shape, not on the weight values.
+   Split per phase ( with , the deployed layer's weights, 4 x 4 x 8 tile): in 
+   the convolution makes 96.6% of the data-memory references (18,712 of 19,374) and requant, pooling and start-up the
+   rest, so a coprocessor that takes the convolution and requant (Gemmini item 1) removes almost all of the memory
+   traffic the core sees.
 2. **A command queue with dependency bits (from Imagine's stream controller).** Instead of single start / done
    registers, the coprocessor takes commands `{op, base, stride, count, buffer}` through a small FIFO (for example 4
    entries), each with a bitmask of the earlier entries it waits for. Two units, DMA and compute, issue from it, so

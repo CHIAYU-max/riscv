@@ -19,6 +19,8 @@ paper (docs/design-notes.md, "Ideas taken from Merrimac and Imagine", item 1): r
 and writes, data-memory loads and stores (with bytes) and instruction fetches. A register read is a
 source operand the instruction's format uses, other than x0; a write is a result written to rd != x0.
 Stores to TOHOST and I/O are not counted. The sidx index register is internal and not counted.
+With --profile as well, the references are also split per function (libgcc helpers count toward their
+caller, as for the instruction counts), so the phases of the block benchmark get their own rows.
 
 usage: sw/iss.py build/tests/add.hex [--trace build/trace/add.ref] [--max-steps n]
                  [--profile build/c/fib.dump] [--refs]
@@ -276,8 +278,8 @@ class RV32I:
         if rd and op not in (0x23, 0x63, 0x0F) and not (op == DOT4_OPCODE and f3 == SIDX_FUNCT3):
             r["reg_write"] += 1
 
-    def refs_report(self, name):
-        r = self.refs
+    def refs_report(self, name, r=None):
+        r = r if r is not None else self.refs
         reg, mem = r["reg_read"] + r["reg_write"], r["load"] + r["store"]
         total = reg + mem
         share = lambda n: f"{100 * n / total:.1f}%" if total else "-"
@@ -334,13 +336,17 @@ def main():
 
     cpu = RV32I(args.hex, dot4=args.dot4, mul=args.mul)
     profile = Profile(args.profile) if args.profile else None
+    new_refs = lambda: dict.fromkeys(("fetch", "reg_read", "reg_write", "load", "load_bytes", "store", "store_bytes"), 0)
+    refs_by_func = {}
     if args.refs:
-        cpu.refs = dict.fromkeys(("fetch", "reg_read", "reg_write", "load", "load_bytes", "store", "store_bytes"), 0)
+        cpu.refs = new_refs()
     steps = 0
     try:
         while steps < args.max_steps:
             if profile:
                 profile.count(cpu.pc)
+                if args.refs:
+                    cpu.refs = refs_by_func.setdefault(profile.current, new_refs())
             cpu.step()
             steps += 1
         result, detail = "TIMEOUT", 0
@@ -358,7 +364,15 @@ def main():
         print(f"{result} {name}: pc 0x{cpu.pc:08x} ({steps} instructions)")
     if profile:
         profile.report()
-    if cpu.refs is not None:
+    if args.refs and refs_by_func:
+        total = new_refs()
+        for r in refs_by_func.values():
+            for k in total:
+                total[k] += r[k]
+        cpu.refs_report(name, total)
+        for func, r in sorted(refs_by_func.items(), key=lambda item: -item[1]["fetch"]):
+            cpu.refs_report(f"{name}:{func}", r)
+    elif args.refs:
         cpu.refs_report(name)
     sys.exit(0 if result == "PASS" else 1)
 

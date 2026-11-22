@@ -232,7 +232,7 @@ block-iss: $(BLOCK_HEX)
 # references per level, docs/design-notes.md "Ideas taken from Merrimac and Imagine", item 1)
 block-refs: $(BLOCK_HEX)
 	@fail=0; for hex in $^; do \
-	    out=$$(python3 sw/iss.py --dot4 --mul --refs --max-steps $(BLOCK_STEPS) $$hex) || fail=1; \
+	    out=$$(python3 sw/iss.py --dot4 --mul --refs --profile $${hex%.hex}.dump --max-steps $(BLOCK_STEPS) $$hex) || fail=1; \
 	    echo "$$out" | grep -E '^(refs|FAIL|TIMEOUT|ILLEGAL|BADADDR)'; \
 	done; exit $$fail
 
