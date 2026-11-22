@@ -760,9 +760,9 @@ area table and the "Add a custom instruction" section); CFU Playground's README 
 (cfu-playground.readthedocs.io); and the README and `spec/intro.adoc` of the proposed Composable Custom Extensions
 (github.com/grayresearch/CX). Item 6 was checked later the same day against the source: CFU Playground's
 `proj/proj_template_v/cfu.v`, `python/amaranth_cfu/cfu.py` and `common/src/cfu.h`, and VexRiscv's
-`src/main/scala/vexriscv/plugin/CfuPlugin.scala` (branch `master`). Not read: Ibex's `ibex_top_tracing.sv`, CFU
-Playground's `riscv.h` and SoC-side encoding setup, and the CX specification PDF; points that depend on them are
-marked as unchecked.
+`src/main/scala/vexriscv/plugin/CfuPlugin.scala` (branch `master`), then CFU Playground's
+`third_party/SaxonSoc/riscv.h` and `soc/vexriscv/src/main/scala/vexriscv/GenCoreDefault.scala`. Not read: Ibex's
+`ibex_top_tracing.sv` and the CX specification PDF; points that depend on them are marked as unchecked.
 
 Ibex (lowRISC) is a small RV32I / RV32E core (with optional M, C and B) in SystemVerilog: the `small` configuration
 in `ibex_configs.yaml` is a "Two-stage pipeline" (`WritebackStage : 0`), `maxperf` a "Three-stage pipeline".
@@ -819,7 +819,11 @@ Scala. Their structure, test harness and interfaces do apply.
    The 10-bit function ID is {funct7, funct3}: the Amaranth base class (`python/amaranth_cfu/cfu.py`) takes funct3
    from bits [2:0] and funct7 from bits [9:3]. `common/src/cfu.h` encodes the instructions as R-type on custom-0
    (`opcode_R(CUSTOM0, funct3, funct7, rs1, rs2)`); `cfu_op0` to `cfu_op7` fix funct3 = 0 to 7 and the caller
-   gives funct7. The value of `CUSTOM0` and the bit layout of `opcode_R` are in `riscv.h`, which was not read.
+   gives funct7. `riscv.h` is not in `common/src` but in `third_party/SaxonSoc/riscv.h` (copied from SpinalHDL's
+   SaxonSoc, MIT license): it sets `CUSTOM0` to `0x0B` and `CUSTOM1` to `0x2B`, and `opcode_R` emits the standard
+   R-type layout with `.word` (opcode | rd << 7 | rs1 << 15 | rs2 << 20 | funct3 << 12 | funct7 << 25), turning
+   register names into numbers with a table of `.set regnum_*` directives; rs1 and rs2 are `"r"` inputs and the
+   result is the `"=r"` output in rd.
 
    Handshake: the template, a combinational CFU, ties `rsp_valid = cmd_valid` and `cmd_ready = rsp_ready`
    ("Trivial handshaking for a combinational CFU"). The Amaranth class keeps `cmd_ready` at 1 while it waits for a
@@ -827,11 +831,16 @@ Scala. Their structure, test harness and interfaces do apply.
    holds `rsp_valid` until the CPU takes it ("Instruction has completed, but the CPU isn't ready to receive the
    result"). On the CPU side, VexRiscv's `CfuPlugin` stalls while `cmd_valid && !cmd_ready` and until `rsp_valid`;
    `rsp_ready` is not tied to 1 but is `!arbitration.isStuckByOthers`. Which instruction bits form the function ID
-   is a plugin parameter (`encodings`, each a masked literal and bit ranges), not fixed in that file; how CFU
-   Playground's SoC sets it was not read.
+   is a plugin parameter (`encodings`, each a masked literal and bit ranges), not fixed in that file. CFU
+   Playground sets it in `GenCoreDefault.scala`: one R-type encoding, `M"-------------------------0001011"` (every
+   custom-0 instruction goes to the CFU) with `functionId = List(14 downto 12, 31 downto 25)` and
+   `CFU_FUNCTION_ID_W = 10`, the same {funct7, funct3} as the Amaranth class; an I-type encoding (opcode
+   `0101011`, immediate as the second operand) is commented out. The plugin is built with `stageCount = 1` and
+   `allowZeroLatency = true`, so a CFU may answer in the same cycle, as a single-cycle `dot4` does.
 
    This project's encoding already matches: `dot4`, `max4` and `requant` are R-type on custom-0 (`0001011`) with
-   funct7 = 0 and funct3 = 0, 1 and 2 (`sw/iss.py`), which are CFU function IDs 0, 1 and 2. The valid / ready
+   funct7 = 0 and funct3 = 0, 1 and 2 (`sw/iss.py`, `DOT4_OPCODE = 0x0B`), which are CFU function IDs 0, 1 and
+   2; the 2:4 instruction `sdot8` uses custom-1 (`0x2B`), CFU Playground's `CUSTOM1`. The valid / ready
    interface of `dot4` (11/26 to 11/27) takes the same eight signals: a command with a function ID and two
    operands, a response with one result, each with its own handshake. The single-cycle core can tie `rsp_ready` to
    1, but the unit keeps the "result waiting" state of the Amaranth class, so it needs no change behind a pipelined
