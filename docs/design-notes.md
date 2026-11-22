@@ -752,6 +752,83 @@ FREP (related work for the coupling comparison), common_cells (it overlaps BaseJ
 Bender (git submodules are used instead), the full CORE-V-XIF, and DORY's tool itself. pulp-platform's `axi`
 library is a reference to read when the ZedBoard's AXI-Lite slave is written, not a dependency.
 
+## Ideas taken from Ibex, VexRiscv and CFU Playground
+
+Reviewed on 2026-11-22 and checked the same day against the sources: Ibex's README, `rtl/` listing,
+`ibex_configs.yaml`, `rtl/ibex_tracer.sv` and `examples/simple_system/README.md`; VexRiscv's README (including the
+area table and the "Add a custom instruction" section); CFU Playground's README and its overview and interface pages
+(cfu-playground.readthedocs.io); and the README and `spec/intro.adoc` of the proposed Composable Custom Extensions
+(github.com/grayresearch/CX). Not read: Ibex's `ibex_top_tracing.sv`, CFU Playground's `python/amaranth_cfu` source,
+and the CX specification PDF; points that depend on them are marked as unchecked.
+
+Ibex (lowRISC) is a small RV32I / RV32E core (with optional M, C and B) in SystemVerilog: the `small` configuration
+in `ibex_configs.yaml` is a "Two-stage pipeline" (`WritebackStage : 0`), `maxperf` a "Three-stage pipeline".
+VexRiscv is written in SpinalHDL, a Scala library; "Nearly everything is plugin based", and its pipeline has 2 to 5
+or more stages. CFU Playground (Google) is "a framework for playing with custom opcodes to accelerate TensorFlow Lite
+for Microcontrollers", built on LiteX and VexRiscv, with the Arty A7 as the default board. No RTL is taken from any
+of them (see "Reused components"); VexRiscv could not be used directly anyway, since its Verilog is generated from
+Scala. Their structure, test harness and interfaces do apply.
+
+1. **Ibex's package and decoder split, for the SystemVerilog core (now).** Ibex keeps the opcodes, ALU operations
+   and other encodings as enums in `ibex_pkg.sv`, and `ibex_decoder.sv` only turns an instruction into control
+   signals. The `sv-random` core's package and decoder follow the same split: the decoder computes nothing, so its
+   output can be checked against the golden model's decode field by field.
+2. **A character output next to TOHOST (before the random tests).** Ibex's simple system has "a basic peripheral
+   to write ASCII output to a file and halt simulation": ASCII out at `0x20000`, simulator halt at `0x20008`, and a
+   machine timer (`mtime` / `mtimecmp`) at `0x30000`. This project already ends a run with a store to TOHOST
+   (`0x8000_0000`, `sw/c/mmio.h`); what it lacks in simulation is a character output, so a failing C test can print
+   which check failed instead of only a test number. If added, it is one more MMIO word next to TOHOST, ignored by
+   the board top level (which keeps the UART for that). The timer is not needed: the core has no interrupts.
+3. **Ibex's tracer as an example of building the trace line.** `ibex_tracer.sv` "takes execution information from
+   the RISC-V Verification Interface (RVFI)" and writes `trace_core_<HARTID>.log`, one line per retired instruction
+   with six tab-separated columns (time, cycle, PC, instruction, decoded form, registers and memory accessed). The
+   trace here stays in Spike's commit-log format (item 12 of the PULP and CVA6 section); Ibex's tracer is read only
+   to see which signals make up each column. Since the tracer reads RVFI, once the RVFI wrapper (next item) exists
+   the trace writer can read the wrapper instead of internal signals.
+4. **Ibex's RVFI ports as the reference for the RVFI wrapper (5/22 to 5/29).** Already planned (item 2 of the
+   OpenTitan section). Ibex's `rvfi_*` ports are the closest example for a small core's wrapper; how Ibex wires them
+   internally (`ibex_top_tracing.sv`) was not checked.
+5. **Named configurations, as in `ibex_configs.yaml` (5/1).** Ibex names each parameter set (`small`, `opentitan`,
+   `maxperf`, ...; the README's "micro" column is not a key in the file). This is the same idea as item 10 of the
+   PULP and CVA6 section: the ASIC configuration files (5/1) give every measured configuration a name, so a row in
+   a results table points to one file.
+6. **The CFU Playground interface as a reference for the `dot4` handshake (11/26 to 11/27).** "When the CPU
+   executes that op code, it passes the contents of two registers to the CFU, waits for a response and puts the
+   result back into a third register." Its interface page names a command side (`cmd_valid`, `cmd_function`,
+   `cmd_inputs_0`, `cmd_inputs_1`) and a response side (`rsp_valid`, `rsp_ready`, `rsp_outputs_0`). The valid /
+   ready interface of `dot4` uses the same split: a command with a function field and two operands, and a response
+   with one result, each with its own handshake, so the unit could later sit behind a CFU-style port without a new
+   design. Not checked: the exact Verilog port names, the width of the function field and how it maps to funct3 /
+   funct7 (the source under `python/amaranth_cfu` has them).
+7. **CFU Playground and the CX proposal as related work for the coupling comparison.** CFU Playground is the
+   closest published example of the tightly coupled point (custom instructions in a soft core, on an Artix-7 board,
+   for TFLM kernels). The difference to state in the SOP and README: here the core is written from scratch, the
+   workload is one layer of a real medical model with bit-exact checks against PyTorch, and the same block is also
+   taken through an ASIC flow and compared with a coprocessor and a standalone hls4ml design. The CX proposal
+   (Jan Gray, "Draft Proposed", not a RISC-V International work product) standardizes such units: custom functions
+   "of up to two operands", selected by CXU, function and state IDs, at "feature levels" from combinational to
+   "variable latency CXUs with flow control". `dot4` with valid / ready is a variable-latency unit with flow
+   control in those terms. Whether the levels have names such as L0 / L1 / L2 is in the CX specification PDF or its
+   design-rationale slides, which were not read.
+8. **VexRiscv's Artix-7 numbers as an outside reference in the results table (12/1 to 12/20).** The README lists,
+   synthesized "as toplevel on the fastest speed grade": "VexRiscv small (RV32I, 0.52 DMIPS/MHz, no datapath
+   bypass, no interrupt) -> Artix 7 -> 243 MHz 504 LUT 505 FF", the same with interrupts at 240 MHz / 556 LUT /
+   566 FF, and "small and productive (RV32I, 0.82 DMIPS/MHz)" at 232 MHz / 816 LUT / 534 FF. They are quoted next
+   to this core's numbers only with that context: VexRiscv is pipelined and measured as a bare core on the fastest
+   speed grade, while this core is single-cycle and the Nexys A7 build includes memory and I/O (the core-only path
+   and the `MEM_KIB=8` Fmax are the closer comparison).
+9. **VexRiscv's `SimdAddPlugin` as a short example of adding a custom instruction.** It decodes with a masked
+   literal (`M"0000011----------000-----0110011"`, `-` = don't care), adds four 8-bit lanes in Execute, and has its
+   own regression (`CUSTOM_SIMD_ADD=yes`). The pattern matches this project's: one decoder entry, one functional
+   unit, one directed test. It is read, not copied.
+
+Extension (decided 2026-11-22, after 2/20, no fixed date): **Ibex and VexRiscv as baselines.** Generated Verilog of
+Ibex (`small`) and VexRiscv (a small RV32I configuration, plus one with a CFU-style unit if time allows) runs the
+same U-Net block on the Nexys A7 and, for Ibex, through the same ASIC flow, giving cycles, LUT / FF / DSP, Fmax and
+energy per MAC next to this core with and without `dot4`. This does not break the rule in "Reused components": the
+baselines are only measured, never part of this project's design, kept outside `rtl/` (for example under
+`baselines/` with each project's license), and credited in the README.
+
 ## Reused components
 
 Decided on 2026-11-20. The core and the custom-instruction units (`dot4`, `requant`, `max4`) are written from
@@ -802,6 +879,8 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
   per-layer cost model calibrated on these points extends them to latency and energy per panoramic X-ray and to a
   small design-space sweep under one final metric (see "Ideas taken from ReaLLM and Chiplet Cloud"). Planned
   for after May 2027; the UART bridge and control registers from the board test can be reused.
+- Ibex and VexRiscv as measured baselines on the same U-Net block (FPGA, and Ibex through the ASIC flow); see
+  "Ideas taken from Ibex, VexRiscv and CFU Playground". After 2/20, no fixed date.
 - Gemmini in simulation (Chipyard, Verilator) as a reference point for the loosely-coupled end, run on the same
   convolution layer for cycle counts. Optional and only if a paper or the SOP needs it: the install is large (many GB
   and a conda environment, with 10 GB of memory in WSL), and it is not this project's own design.
