@@ -172,6 +172,11 @@ Reviewed on 2026-11-20. Neither Chipyard nor Chisel is used.
    header that the host program uses with both back ends (Verilator and UART). The addresses in the RTL and in the
    host program then cannot disagree, and the coprocessor later adds rows to the same table. The same table also gives
    the address ranges of the transducers on the bus outside the core.
+   Skeleton written on 2026-11-22 (draft contents, decided on 2/20): `sw/regs/regs.json` -> `sw/regs/regtool.py` ->
+   `build/regs/soc_regs.{sv,h,md}` (`make regs-test`: Verilator lint clean, and `tb/tb_soc_regs.sv` checks read-back,
+   read-only inputs, the start / clear pulses and an unused offset). The four existing I/O registers are marked
+   external (still decoded in `fpga/rtl/soc.v`) and only go into the header and the map; the draft block holds CTRL,
+   STATUS, the gated cycle counter, four event counters, the retire signature and a scratch register.
 2. **A RoCC-style command interface as a variant of the coprocessor.** RoCC sends commands to an accelerator as custom
    instructions (funct7 and two source registers, optionally writing `rd`), and the accelerator reaches memory through
    its own port. `dot4` already uses custom-0, so point 2 of the coupling comparison can be attached in two ways:

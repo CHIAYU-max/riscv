@@ -220,6 +220,7 @@ Whether to accumulate into `rd`, saturate, or use DSP48 slices is still open.
 | `make dot4-test` | `dot4_test` and `conv_dot4` on `rv32i_core` (needs dot4 in the RTL) |
 | `make nnops-test` | `nnops_test` on `rv32i_core` (needs max4 and requant in the RTL) |
 | `make block-iss` | the U-Net block benchmark on the golden model, instructions per phase (below) |
+| `make regs-test` | generate the register block, C header and map from `sw/regs/regs.json` (draft) and self-check it |
 | `make block-refs` | the same five builds, register-file and data-memory references (`sw/iss.py --refs`) |
 | `make block-test` | the U-Net block benchmark on `rv32i_core` |
 | `make bench` | cycles on the core and instructions on the golden model for each version |

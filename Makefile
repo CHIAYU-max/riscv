@@ -261,6 +261,16 @@ bench: build/sim_core build/c/conv_ref.hex build/c/conv_mul.hex build/c/conv_dot
 # Lint the core with Verilator (catches latches, width mismatches and unused signals that Icarus accepts)
 # WIP=1: unused signals / parameters are expected while the decoder and datapath are being filled in
 LINT_WIP := $(if $(WIP),-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM)
+# Register table (DRAFT until the 2/20 session): sw/regs/regs.json -> build/regs/soc_regs.{sv,h,md}
+REGS_OUT := build/regs/soc_regs.sv build/regs/soc_regs.h build/regs/soc_regs.md
+$(REGS_OUT) &: sw/regs/regs.json sw/regs/regtool.py
+	python3 sw/regs/regtool.py sw/regs/regs.json --out build/regs
+regs: $(REGS_OUT)
+regs-test: $(REGS_OUT) tb/tb_soc_regs.sv
+	verilator --lint-only -Wall --top-module soc_regs build/regs/soc_regs.sv
+	iverilog -g2012 -Wall -s tb_soc_regs -o build/regs/sim_soc_regs tb/tb_soc_regs.sv build/regs/soc_regs.sv
+	vvp -n build/regs/sim_soc_regs | grep -E '^(PASS|FAIL)'; vvp -n build/regs/sim_soc_regs | grep -q '^PASS'
+
 lint:
 	verilator --lint-only -Wall -Wno-DECLFILENAME $(LINT_WIP) --top-module rv32i_core $(CORE_RTL)
 
@@ -298,5 +308,5 @@ sim:
 clean:
 	rm -rf build
 
-.PHONY: FORCE lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-refs block-test bench bit fmax prog selftest xsim sim clean
+.PHONY: FORCE regs regs-test lint progress random-iss random-test test test-one tests c-test c-one trace iss-test dot4-iss dot4-test nnops-test block-iss block-refs block-test bench bit fmax prog selftest xsim sim clean
 .PRECIOUS: build/tests/%.elf build/c/%.elf
