@@ -407,7 +407,16 @@ paper's later sections and are not checked word for word.
    SRAM, 12.8 GB/s) a 64 x 64 array takes 140 / 80 / 59 ms for dense / 2:4 / 1:4 at 1.00 / 0.62 / 0.44 of the INT8
    energy; at 4 GB/s it is memory-bound (217 / 188 / 171 ms), so on a board with slow DRAM 1:4 buys little time
    over 2:4. 2:4 stays the main candidate (its integer and fixed-point paths are already checked); 1:4 is a
-   run-time mode of the same array.
+   run-time mode of the same array. Updated on 2026-11-22 for the deployed configuration (`accel_deploy.py
+   --tiling v2`: slim decoder, INT8 cascade with 2.58 models per ROI on average, skips and residuals tracked per
+   layer, the corrected tiling below): 45 / 27 / 19 ms at 12.8 GB/s and 68 / 60 / 53 ms at 4 GB/s, and INT8 + 2:4
+   uses 0.19 of the main model's INT8 energy. The model was then cross-checked against Timeloop and Sparseloop on
+   four layers (criteria set before each run): the first tiling never underestimated DRAM traffic but overestimated
+   a layer whose 885 KB of weights nearly fill the 1 MB SRAM by 82% (it tried only power-of-two tiles and reloaded
+   both inputs and weights); the corrected tiling is within 0.93-0.99 of Timeloop's minimum on all four layers, also
+   with the array held at full speed. For 2:4, weight traffic agrees within 3% and the cycle ratio (0.50) matches
+   on two of three layers; on the third the model rounds 4.5 array passes up to 5, which the hardware has to do.
+   Energy constants are not checked externally.
 4. **Tiles sized by a memory predictor (from MAFAT, Farley and Gerstlauer, IESS 2022).** MAFAT predicts a tile's
    memory as scratch + output + 2 x input and searches fusing cuts and tile counts until the prediction fits the
    limit; on a Raspberry Pi 3 with 16 MB it is 2.78x faster than the untiled run and within 6% of the best measured
@@ -516,13 +525,15 @@ design evaluated on a cycle-accurate simulator, not a built chip. Facts used bel
    the decoder. The cost model lists skip traffic as its own row and decides per level whether it stays in the
    scratchpad or goes through DDR3. The same applies to fusing the residual add into the convolution: the residual
    tile must stay in the buffer, the capacity cost Merrimac notes for merged kernels.
-   Computed on 2026-11-22 for the dental U-Net (`skip_traffic.py` in the dental repository, shapes only, INT8,
-   the same tiling model as its `accel_explore.py`): the four skips are 0.26, 0.52, 1.05 and 4.19 MB (6.03 MB, the
-   largest, `stem`, alive across 41 layers), plus 16 ResNet residual identities of up to 1.05 MB. For the deployed
-   slim-decoder model (24.13 G MACs, 22.57 MB of INT8 weights) one 512 x 512 ROI moves 135.6 MB with 512 KB of
-   SRAM, 112.0 MB with 1 MB, 57.5 MB with 4 MB and 44.8 MB with 8 MB. Up to 1 MB no skip can stay on chip, and
-   skips and residuals are 21% of the traffic at 512 KB; keeping everything on chip needs 8.91 MB. The earlier
-   all-or-nothing skip rule missed the residual traffic (8.4 MB at 1 MB, an upper bound).
+   Computed on 2026-11-22 for the dental U-Net (`skip_traffic.py --tiling v2` in the dental repository, shapes
+   only, INT8, the tiling corrected after the Timeloop cross-check, UT Austin section item 3): the four skips are 0.26, 0.52, 1.05
+   and 4.19 MB (6.03 MB, the largest, `stem`, alive across 41 layers), plus 16 ResNet residual identities of up to
+   1.05 MB. For the deployed slim-decoder model (24.13 G MACs, 22.57 MB of INT8 weights) one 512 x 512 ROI moves
+   109.4 MB with 512 KB of SRAM, 100.8 MB with 1 MB, 56.7 MB with 4 MB and 44.1 MB with 8 MB (the first tiling gave
+   135.6 / 112.0 / 57.5 / 44.8 MB, overestimating the layers' own traffic at small SRAM). Up to 512 KB no skip can
+   stay on chip (from 1 MB the 0.26 MB `layers.2` skip does), and skips and residuals are 25% of the traffic at
+   512 KB; keeping everything on chip needs 8.91 MB. The earlier all-or-nothing skip rule missed the residual
+   traffic (8.4 MB at 1 MB, an upper bound).
    The deployed model has no `head.0.block.3` (its output head is a 1 x 1 convolution at half resolution); the same
    32-to-32 3 x 3 block is its `decoders.3.block.3` at 256 x 256 (same weight shape, 0.60 G MACs), so whole-layer
    numbers for the deployed model use 256 x 256: on the Nexys A7, 1,024 tiles of 8 x 16 x 16 and 11.3 MB moved
