@@ -41,6 +41,9 @@ A packed INT8 dot product in a RISC-V core is not a new idea:
   register-file accesses; MFSA (ICCD 2026) is a multi-format systolic array whose processing elements share one
   datapath from FP32 down to INT4, including block-scaled formats; CacheFlex (MICRO 2026) lets software turn part of
   the private L2 into a scratchpad at run time.
+- Imagine and Merrimac (Stanford) are stream processors: kernels read operands from local registers, streams
+  between kernels stay in a software-managed stream register file, and a host issues coarse stream instructions
+  (load a stream, run a kernel) instead of single operations.
 
 What this project adds is the link to one workload: the operand signedness of `dot4` and the `requant` format come
 from the INT8 version of the U-Net I use for dental X-rays, and the benchmark measures a block of that network,
@@ -451,6 +454,62 @@ paper's later sections and are not checked word for word.
 Not taken: Versal AI Engines and Stratix 10 NX tensor blocks (FCCM 2024), the supernet and evolutionary search
 (ELSA; a per-layer sensitivity scan is enough for one model), modified BRAMs (CoMeFa), the 1:3 level (SST), and
 Linux kernel drivers and device trees (Lecture 10; bare metal first).
+
+## Ideas taken from Merrimac and Imagine
+
+Reviewed on 2026-11-22 from the full SC'03 paper (Dally et al., "Merrimac: Supercomputing with Streams") and from
+Khailany's Stanford thesis on Imagine (2003), whose stream instruction set Merrimac follows. Merrimac is a 90 nm
+design evaluated on a cycle-accurate simulator, not a built chip. Facts used below, all checked in those two sources:
+
+- Merrimac node: 16 clusters of four 64-bit multiply-add units at 1 GHz (128 GFLOPS); 768 words of local registers
+  (LRF) per cluster; an 8K-word stream register file (SRF) bank per cluster, 128K words (1 MB) in all; an 8-bank
+  512 KB cache; 20 GB/s of DRAM bandwidth, a FLOP / word ratio over 50:1. Each cluster reaches only its own SRF bank,
+  over short wires and without tags; a global switch joins the clusters and the cache banks.
+- In the three applications, over 96% of all references come from the LRFs and under 1.5% from memory (Table 2 of
+  the paper lists LRF, SRF and memory references per application). The SRF's bandwidth is about an order of
+  magnitude below the LRFs'.
+- Data moves a strip at a time. The compiler sizes a strip to fill the SRF without spilling, and strips are software
+  pipelined: strip i+1 loads while the kernels run on strip i and strip i-1 is stored.
+- Merging kernels passes intermediate results through the LRFs instead of the SRF, at the cost of LRF capacity.
+- Memory and compute were balanced by cost: the last dollar spent on each should buy the same gain, not a fixed
+  FLOP / byte ratio.
+- Imagine: the host writes stream instructions into a 32-entry operation buffer, each with a bitmask of its
+  dependencies on the other entries. A scoreboard issues an instruction once its dependencies are done and its unit
+  is free, so the host can run up to 32 instructions ahead. Kernels are scheduled into VLIW code at compile time;
+  only stream instructions are scheduled at run time. The address generators support sequential, strided, indexed
+  and bit-reversed access, and the memory controllers reorder accesses to keep the DRAM busy.
+
+1. **References per level in the cost model.** The per-layer cost model reports Merrimac's Table 2 for each layer
+   and each coupling point: words read or written in the PE registers / accumulators, in the scratchpad and in DDR3,
+   with the share of each. The roofline then gets two bandwidth lines (scratchpad and DDR3) instead of one. The event
+   counters (5/8) count scratchpad and DDR3 words, so the board run gives the same table as the model.
+2. **A command queue with dependency bits (from Imagine's stream controller).** Instead of single start / done
+   registers, the coprocessor takes commands `{op, base, stride, count, buffer}` through a small FIFO (for example 4
+   entries), each with a bitmask of the earlier entries it waits for. Two units, DMA and compute, issue from it, so
+   the load of the next tile can start while the current one computes and the host does not wait for each step.
+   This adds one number to the coupling comparison: MACs per command, the control cost the core pays at each point.
+   It fits after the plain start / done version from 2/20 works.
+3. **Tiles sized for three buffers.** The tiling function (Gemmini item 3, the MAFAT predictor in the UT Austin
+   section) picks, at compile time, the largest tile for which load, compute and store buffers all fit in the
+   scratchpad, so double buffering (Gemmini item 6) needs no spill.
+4. **Skip connections as long-range producer-consumer traffic.** Merrimac keeps short-range reuse in the LRFs and
+   long-range reuse in the SRF. In the U-Net, a skip feature map is produced by the encoder and used much later by
+   the decoder. The cost model lists skip traffic as its own row and decides per level whether it stays in the
+   scratchpad or goes through DDR3 (to be computed for the dental U-Net). The same applies to fusing the residual add
+   into the convolution: the residual tile must stay in the buffer, the capacity cost Merrimac notes for merged
+   kernels.
+5. **One bank per lane, no global crossbar.** Each lane of the INT8 array reads only its own scratchpad bank (for
+   example a BaseJump 1R1W memory), and the 2:4 selection stays a 4-to-2 mux inside the lane (SST, UT Austin item
+   1), so the wiring does not grow with the array.
+6. **Address modes of the DMA.** Sequential and 2-D strided access cover tiles and im2col without the core
+   rearranging data. Indexed access is not needed for 2:4, because the 2-bit indices are stored with the weights.
+7. **Balance by marginal gain.** In the design-space sweep, array size, scratchpad size and DDR3 bandwidth are chosen
+   by the gain in the final metric per added LUT / BRAM / DSP, not by a fixed MACs-per-byte ratio.
+
+Not taken: 64-bit floating point, the multi-node network (high-radix routers, Clos), scatter-add (CNN inference does
+not need it), the cache next to the SRF, VLIW kernel microcode and the stream compiler, and DRAM access reordering
+(it makes memory latency depend on the access mix; this project keeps a simple in-order DMA so that board and
+simulation cycle counts can match).
 
 ## Reused components
 
