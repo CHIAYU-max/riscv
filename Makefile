@@ -58,7 +58,7 @@ DEMO_TOP := tb_top_processor
 
 # C programs (sw/c): crt0 + libgcc for multiply / divide; main's return value goes to TOHOST
 C_CFLAGS := -march=rv32i -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -T sw/c/link.ld -Wl,--no-warn-rwx-segments
-C_PROGS  ?= sum fib sort muldiv
+C_PROGS  ?= sum fib sort muldiv putc
 C_HEX    := $(addprefix build/c/,$(addsuffix .hex,$(C_PROGS)))
 MHZ      ?= 25
 BOARD    ?= nexys_a7

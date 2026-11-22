@@ -3,6 +3,7 @@
 
 Runs a program hex (same file as tb/tb_core.v, one little-endian word per line) on the
 same memory map as the testbench and reports PASS / FAIL / ILLEGAL / BADADDR / TIMEOUT.
+Characters stored to PUTC (0x8000_0010) are printed first, one "OUT <name>: <text>" line each.
 With --trace it writes the reference trace that sw/trace_diff.py compares against
 the testbench's trace (see README.md, "Golden model and trace comparison"):
 
@@ -32,6 +33,7 @@ import sys
 
 MEM_BYTES = 64 * 1024
 TOHOST = 0x8000_0000
+PUTC = 0x8000_0010   # one character in bits [7:0]; printed as "OUT <name>: <text>" lines
 MASK = 0xFFFF_FFFF
 
 # dot4 custom instruction (only with --dot4): custom-0 opcode 0001011, R-type, funct3 = 0, funct7 = 0,
@@ -99,6 +101,7 @@ class RV32I:
         self.idx = 0          # index register of sdot8 (sidx)
         self.pc = 0
         self.trace = []
+        self.text = ""   # characters stored to PUTC
         self.refs = None      # with --refs: dict of reference counters
 
     # Memory: RAM at 0, reads elsewhere return 0 (as in tb_core.v)
@@ -119,6 +122,8 @@ class RV32I:
                     self.mem[base + lane] = data >> (8 * lane) & 0xFF
         elif not addr >> 31:
             raise Halt("BADADDR")
+        elif addr == PUTC and strb & 1:
+            self.text += chr(data & 0xFF)
         # other I/O (LED, SEG): the store is only traced
 
     def step(self):
@@ -356,6 +361,8 @@ def main():
     if args.trace:
         with open(args.trace, "w") as f:
             f.writelines(line + "\n" for line in cpu.trace)
+    for line in cpu.text.splitlines():
+        print(f"OUT     {name}: {line}")
     if result == "PASS":
         print(f"PASS    {name} ({steps} instructions)")
     elif result == "FAIL":

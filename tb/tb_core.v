@@ -7,6 +7,8 @@
 // 32-bit word per line). Instruction and data ports read the same array
 // asynchronously, so self-modifying code is visible to instruction fetch.
 // A store to TOHOST (0x8000_0000) ends the run: 1 = pass, (n << 1) | 1 = fail in test n.
+// A store to PUTC (0x8000_0010) adds the character in bits [7:0] to the output; each line is printed as
+// "OUT <name>: <text>" (sim_puts in sw/c/mmio.h).
 // See README.md ("Core interface") for the port contract.
 //
 // +TRACE=<file> writes every store (S lines) for sw/trace_diff.py. Built with
@@ -17,6 +19,7 @@ module tb_core;
     localparam MEM_WORDS = 16384;  // 64 KiB
     localparam AW        = 14;     // word address bits
     localparam TOHOST    = 32'h8000_0000;
+    localparam PUTC      = 32'h8000_0010;
 
     reg clk = 1'b0;
     reg rst = 1'b1;
@@ -73,9 +76,23 @@ module tb_core;
     integer max_cycles;
     integer cycles;
     integer i;
+    string  text_line = "";
+
+    // PUTC: collect characters, print a line at each newline
+    task put_char(input [7:0] c);
+        begin
+            if (c == 8'h0A) begin
+                $display("OUT     %0s: %0s", name, text_line);
+                text_line = "";
+            end else begin
+                text_line = {text_line, string'(c)};
+            end
+        end
+    endtask
 
     task finish_with(input string result, input integer detail);
         begin
+            if (text_line.len() > 0) $display("OUT     %0s: %0s", name, text_line);
             if (result == "PASS")
                 $display("PASS    %0s (%0d cycles)", name, cycles);
             else if (result == "FAIL")
@@ -124,6 +141,8 @@ module tb_core;
                         finish_with("PASS", 0);
                     else
                         finish_with("FAIL", dmem_wdata >> 1);
+                end else if (dmem_addr == PUTC) begin
+                    if (dmem_wstrb[0]) put_char(dmem_wdata[7:0]);
                 end else if (dmem_in_ram) begin
                     if (dmem_wstrb[0]) mem[dmem_addr[AW+1:2]][7:0]   <= dmem_wdata[7:0];
                     if (dmem_wstrb[1]) mem[dmem_addr[AW+1:2]][15:8]  <= dmem_wdata[15:8];

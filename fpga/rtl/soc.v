@@ -8,6 +8,8 @@
 //   0x8000_0004  LED     write: led_o[15:0]
 //   0x8000_0008  SEG     write: seg_value_o[31:0] (a 4-digit display shows bits [15:0])
 //   0x8000_000C  SW      read : sw_i[15:0] (synchronized here, two flops)
+//   0x8000_0010  PUTC    write: ignored here (text output in simulation, tb/tb_core.v)
+//   Other I/O addresses are ignored: stores do nothing, loads return 0.
 module soc #(
     parameter INIT_FILE = "",
     parameter MEM_KIB   = 32            // 32 (Nexys A7) or 8 (Basys3); must be a power of two
@@ -42,7 +44,8 @@ module soc #(
 
     // ------------------------------------------------------------------
     // Memory and I/O decode
-    wire        is_io = dmem_addr[31];
+    wire        is_io  = dmem_addr[31];
+    wire        is_reg = is_io && (dmem_addr[30:4] == 27'd0);   // the four registers at 0x8000_0000..0x8000_000C
     wire [31:0] ram_rdata;
 
     fpga_mem #(.WORDS(WORDS), .AW(AW), .INIT_FILE(INIT_FILE)) u_mem (
@@ -70,7 +73,7 @@ module soc #(
             led_q  <= 16'h0000;
             seg_q  <= 32'h0000_0000;
             done_q <= 1'b0;
-        end else if (is_io && (|dmem_wstrb)) begin
+        end else if (is_reg && (|dmem_wstrb)) begin
             case (dmem_addr[3:2])
                 2'd0: begin seg_q <= dmem_wdata; done_q <= 1'b1; end   // TOHOST
                 2'd1: led_q <= dmem_wdata[15:0];
@@ -81,7 +84,7 @@ module soc #(
     end
 
     assign dmem_rdata = !is_io ? ram_rdata :
-                        (dmem_addr[3:2] == 2'd3) ? {16'h0000, sw_sync_q} : 32'h0000_0000;
+                        (is_reg && dmem_addr[3:2] == 2'd3) ? {16'h0000, sw_sync_q} : 32'h0000_0000;
 
     assign led_o       = led_q;
     assign seg_value_o = seg_q;

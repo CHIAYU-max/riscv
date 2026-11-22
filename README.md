@@ -85,16 +85,22 @@ Icarus 12 limits to keep in mind:
 | `0x8000_0004` LED | store is logged | write `LED[15:0]` |
 | `0x8000_0008` SEG | store is logged | write a 32-bit value; bits [15:0] shown as 4 hex digits (Nexys A7: all 32 bits, 8 digits) |
 | `0x8000_000C` SW | reads 0 | read `SW[15:0]` (two-flop synchronized) |
+| `0x8000_0010` PUTC | store adds the character in bits [7:0]; each line is printed as `OUT <name>: <text>` | ignored |
+
+Other addresses from `0x8000_0000` up are ignored on the boards (stores do nothing, loads return 0); the testbench logs
+stores to them.
 
 C programs link for 32 KiB (`sw/c/link.ld`) so the same hex runs in simulation and on the board.
 
 ## C programs
 
 `sw/c/crt0.S` sets `gp` and `sp`, clears `.bss`, calls `main` and stores its return value to TOHOST
-(0 = pass). Multiply and divide come from libgcc (`__mulsi3`, `__divsi3`), since RV32I has no M extension.
+(0 = pass). `sim_putc`, `sim_puts` and `sim_puthex` in `sw/c/mmio.h` print through PUTC, so a failing program
+can say which check failed; the testbench and `sw/iss.py` print the same `OUT` lines, and the boards ignore
+the stores (`sw/c/programs/putc.c`). Multiply and divide come from libgcc (`__mulsi3`, `__divsi3`), since RV32I has no M extension.
 
 ```bash
-make c-test                # sum, fib, sort, muldiv: each returns 0 when its result is correct
+make c-test                # sum, fib, sort, muldiv, putc: each returns 0 when its result is correct
 make c-one P=fib VCD=1     # one program; disassembly in build/c/fib.dump
 ```
 

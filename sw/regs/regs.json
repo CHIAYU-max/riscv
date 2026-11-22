@@ -12,6 +12,8 @@
      "fields": [{"name": "value", "lsb": 0, "width": 32, "access": "wo", "desc": "Basys3 shows bits [15:0], Nexys A7 all 32"}]},
     {"name": "SW", "offset": "0x00C", "external": true, "desc": "Switches (decoded in fpga/rtl/soc.v).",
      "fields": [{"name": "sw", "lsb": 0, "width": 16, "access": "ro", "desc": "SW[15:0], synchronized"}]},
+    {"name": "PUTC", "offset": "0x010", "external": true, "desc": "Text output in simulation (tb/tb_core.v, sw/iss.py); ignored by fpga/rtl/soc.v.",
+     "fields": [{"name": "char", "lsb": 0, "width": 8, "access": "wo", "desc": "one character; a newline ends the line"}]},
 
     {"name": "CTRL", "offset": "0x100", "desc": "Start the measured region and clear the counters.",
      "fields": [{"name": "start", "lsb": 0, "width": 1, "access": "wo_pulse", "desc": "write 1: one-cycle start pulse"},

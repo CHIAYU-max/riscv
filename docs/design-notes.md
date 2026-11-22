@@ -777,8 +777,13 @@ Scala. Their structure, test harness and interfaces do apply.
    to write ASCII output to a file and halt simulation": ASCII out at `0x20000`, simulator halt at `0x20008`, and a
    machine timer (`mtime` / `mtimecmp`) at `0x30000`. This project already ends a run with a store to TOHOST
    (`0x8000_0000`, `sw/c/mmio.h`); what it lacks in simulation is a character output, so a failing C test can print
-   which check failed instead of only a test number. If added, it is one more MMIO word next to TOHOST, ignored by
-   the board top level (which keeps the UART for that). The timer is not needed: the core has no interrupts.
+   which check failed instead of only a test number. Added on 2026-11-22 (branch `sim-putc`): PUTC at
+   `0x8000_0010`, `sim_putc` / `sim_puts` / `sim_puthex` in `sw/c/mmio.h`, printed as `OUT <name>: <text>` by
+   `tb/tb_core.v` and `sw/iss.py`, and ignored by `fpga/rtl/soc.v` (whose decode now checks address bits [30:4],
+   so the new address no longer aliases TOHOST). The new test program exposed a linker bug: `__bss_start` was
+   not word aligned, so `crt0`'s word stores were misaligned when `.rodata` had an odd length (Spike stopped; the
+   golden model rounded the address down and overwrote the last byte of `.rodata`); `sw/c/link.ld` now aligns
+   it. The timer is not needed: the core has no interrupts.
 3. **Ibex's tracer as an example of building the trace line.** `ibex_tracer.sv` "takes execution information from
    the RISC-V Verification Interface (RVFI)" and writes `trace_core_<HARTID>.log`, one line per retired instruction
    with six tab-separated columns (time, cycle, PC, instruction, decoded form, registers and memory accessed). The

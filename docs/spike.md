@@ -7,7 +7,7 @@ RISC-V ISA simulator, on every retired instruction (pc, encoding, destination, v
 (address, byte lanes, data).
 
 ```
-make spike-check                  # rv32ui (39 tests), the C programs (sum fib sort muldiv), 50 random programs
+make spike-check                  # rv32ui (39 tests), the C programs (sum fib sort muldiv putc), 50 random programs
 make spike-check RAND_COUNT=200   # more random programs (RAND_SEED, RAND_LEN as for random-test)
 sw/run_random.sh --spike --seed 7 --count 1   # one random program; traces in build/random/rand_7.*
 ```

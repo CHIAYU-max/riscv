@@ -19,6 +19,7 @@ SECTIONS
     *(.sdata .sdata.*)
   } > RAM
   .bss    : {
+    . = ALIGN(4);   /* crt0 clears .bss a word at a time, so it must start on a word boundary */
     __bss_start = .;
     *(.sbss .sbss.* .bss .bss.* COMMON)
     . = ALIGN(4);
