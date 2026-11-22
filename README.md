@@ -195,6 +195,10 @@ with `-DRETIRE_TRACE`, so a core with them still works with `make test`.
 
 The run ends at the TOHOST store, so a pipelined core's trace may be up to 4 instructions short; that still counts as a match.
 
+`make spike-check` checks the golden model itself against Spike, the reference RISC-V ISA simulator:
+every retired instruction and store of rv32ui, the C programs and random programs (base RV32I;
+installation and limits in [docs/spike.md](docs/spike.md)).
+
 The top_processor demo:
 
 ```bash
