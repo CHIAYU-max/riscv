@@ -874,6 +874,95 @@ energy per MAC next to this core with and without `dot4`. This does not break th
 baselines are only measured, never part of this project's design, kept outside `rtl/` (for example under
 `baselines/` with each project's license), and credited in the README.
 
+## Ideas taken from TheHuzz, HyPFuzz and MABFuzz (and Polar Sparsity)
+
+Read in full on 2026-11-25: TheHuzz (Kande et al., USENIX Security 2022), HyPFuzz (Chen et al., USENIX
+Security 2023), MABFuzz (Gohil et al., DATE 2024) and PSOFuzz (Chen et al., ICCAD 2023) from JV Rajendran's
+SETH lab at Texas A&M, and Polar Sparsity (Shrestha et al., NeurIPS 2025) from Narasimha Reddy's group.
+
+**What the fuzzers do.** TheHuzz runs short tests (configuration instructions that are never mutated, then
+20 test instructions) on the RTL and on a golden reference model (Spike), compares the traces, and keeps a
+mutant only if it reaches new code coverage (statement, branch, toggle, expression, condition, FSM, from
+the simulator). Its twelve mutation operators are AFL-style: bit flips of 1, 2, 4, 8 and 16 bits and byte
+arithmetic on the data bits only (M0-M7), a random byte, delete (NOP), clone, and an opcode overwrite
+(M8-M11). MABFuzz keeps TheHuzz and only changes which seed to mutate next: 10 seeds are the arms of a
+bandit (epsilon-greedy, UCB1 or EXP3 with eta = 0.1), the reward is 0.25 x coverage new to that arm +
+0.75 x coverage new to all arms, and an arm with no new coverage in its last 3 pulls is replaced by a new
+seed. HyPFuzz switches to JasperGold when the fuzzer's rate of new coverage over its last 100 tests drops
+below the formal tool's average rate, and turns the formal tool's input trace for an uncovered branch point
+(chosen in the module with the most uncovered points) into a new seed. The reported gains are on code
+coverage of CVA6, Rocket and BOOM: MABFuzz reaches TheHuzz's coverage at least 2.98x faster on CVA6 and
+Rocket and gives nothing on BOOM, where TheHuzz is already above 95%; HyPFuzz is 11.68x faster than
+TheHuzz on average and found 3 new CVA6 bugs.
+
+**What was built here (`sw/fuzz.py`, `make fuzz`).** The same loop for this core, with three changes:
+(1) every mutant is repaired into a legal, terminating RV32I instruction (no traps, CSRs or ECALL on this
+core; loads and stores through t6 inside the data buffer, forward branches and JAL only, rd never t5 / t6),
+so TheHuzz's illegal-instruction bugs are out of scope; (2) coverage is ISA-level functional coverage from
+the golden model's trace (mnemonic x rd = x0, operand and immediate value classes, rs1 = rs2, result class,
+branch taken / not taken, byte lane, and read-after-write pairs between consecutive instructions), because
+the core is not finished and Icarus has no code coverage; (3) the check today is the golden model against
+Spike; `--ref core --sim build/sim_core_retire` checks the core against the golden model once it runs.
+Policies: `random` (a fresh random test each time, as `random-test`), `rr` (TheHuzz mutation, seeds in
+round robin), `ucb` and `exp3` (MABFuzz, its parameters), and `ucb-dep`, which adds an operator of ours
+(M12: the next test instruction reads this one's rd, e.g. a load followed by its use).
+
+**Evaluation (`sw/fuzz_bugs.py`, 2026-11-25).** Rule set before the run: `make fuzz` defaults to the
+policy with the most bins after 1,600 tests. Three seeds per policy; bug detection = tests until the first
+mismatch with Spike, with one of ten bugs injected into a copy of the golden model, 800 tests at most
+(results in steps of 14, the batch size).
+
+| policy | bins after 1,600 tests (mean, 3 seeds) |
+| --- | ---: |
+| random | 1,233 |
+| ucb | 764 |
+| ucb-dep | 763 |
+| rr | 745 |
+| exp3 | 707 |
+
+| injected bug | random | rr | ucb | exp3 | ucb-dep |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| B1 SRA by 31 shifts in zeros | 127 (3/3) | 15 (2/3) | 15 (2/3) | 106 (2/3) | 15 (2/3) |
+| B2 SLTIU zero-extends its immediate | 4 (3/3) | 77 (3/3) | 77 (3/3) | 29 (3/3) | 82 (3/3) |
+| B3 LH from lane 2 zero-extends | 4 (3/3) | 43 (3/3) | 43 (3/3) | 15 (3/3) | 43 (3/3) |
+| B4 BGE not taken when equal | 14 (3/3) | 127 (3/3) | 127 (3/3) | 295 (3/3) | 127 (3/3) |
+| B5 SLT wrong when rs1 = INT_MIN | 149 (3/3) | 270 (1/3) | 328 (1/3) | 506 (2/3) | 436 (2/3) |
+| B6 load result not visible to the next rs1 | 11 (3/3) | 192 (2/3) | 320 (2/3) | 113 (1/3) | 44 (3/3) |
+| B7 SB to lane 3 writes lane 0 | 6 (3/3) | 15 (3/3) | 15 (3/3) | 43 (3/3) | 15 (3/3) |
+| B8 SUB writes x0 | 26 (3/3) | 85 (1/3) | 205 (3/3) | 243 (2/3) | 85 (1/3) |
+| B9 AUIPC adds pc + 4 | 1 (3/3) | 15 (3/3) | 15 (3/3) | 14 (3/3) | 15 (3/3) |
+| B10 SRLI by 0 returns 0 | 5 (3/3) | 150 (2/3) | 150 (2/3) | 717 (3/3) | 426 (2/3) |
+
+Median tests to detection over the seeds that found it (found / seeds). The correct golden model matched
+Spike on all 24,000 coverage tests.
+
+- **Random tests win here, so `make fuzz` defaults to `random` and `random-test` stays the main random
+  check.** Random found every bug in every seed, 9 of 10 faster than any mutation policy. The mutation
+  policies keep a seed's register and data values and change only 1-3 instructions, so they reach few new
+  operand classes, and single-instruction corner cases need exactly that. This is not a contradiction of
+  the papers: their gains are on RTL code coverage of large out-of-order cores, where a test has to build up
+  deep microarchitectural state and keeping a good prefix pays.
+- **MABFuzz's seed selection did not help over round robin** (ucb 764 bins against rr 745, exp3 707).
+- **The dependency operator helps where it should**: among the mutation policies, the load-use bug B6 drops
+  from 320 tests (ucb) to 44 (ucb-dep) and is found in 3 of 3 seeds instead of 2. Random still finds it in 11.
+
+**When to come back to it.**
+1. When the core passes rv32ui: run `--ref core`, and add Verilator `--coverage` (line and toggle) of the
+   core as the feedback instead of the ISA bins. That is the setting in which TheHuzz and MABFuzz reported
+   their gains, and it shows which RTL the random tests never reach (the testplan item from OpenTitan above).
+2. For the 5-stage version (Next steps): stalls and forwarding are deep state of the kind mutation helps
+   with, and read-after-write at distances 1-3 is what M12 generates; re-run this evaluation there.
+3. For riscv-formal (2026-05-22 to 05-29): HyPFuzz's rule is a ready schedule: run random tests until the
+   rate of new coverage over the last 100 tests falls below the formal tool's average rate, then give the
+   formal tool the uncovered points of the module with the most of them.
+
+**Polar Sparsity (Reddy's group).** In batched LLM decoding, MLP activation sparsity disappears as the
+batch grows (a neuron is kept if any sequence in the batch needs it, and weight reads are already shared by
+the batch), while attention-head sparsity stays, because each sequence reads its own KV cache and that cost
+grows with the batch; their head-sparse attention kernel reaches 2.8x at 30% of the heads and the whole
+system up to 2.2x. The same lesson as the dental 2:4 result: skipping work helps only when it removes the
+cost that dominates (here the memory traffic of attention), not when it removes work that is already cheap.
+
 ## Reused components
 
 Decided on 2026-11-20. The core and the custom-instruction units (`dot4`, `requant`, `max4`) are written from

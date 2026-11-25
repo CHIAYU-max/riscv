@@ -205,6 +205,10 @@ The run ends at the TOHOST store, so a pipelined core's trace may be up to 4 ins
 every retired instruction and store of rv32ui, the C programs and random programs (base RV32I;
 installation and limits in [docs/spike.md](docs/spike.md)).
 
+`make fuzz` runs the same check as a coverage-guided fuzzer (`sw/fuzz.py`, after TheHuzz and MABFuzz) and
+reports ISA-level functional coverage; on this core plain random tests reached more coverage and found
+injected golden-model bugs sooner than mutation (results in [docs/design-notes.md](docs/design-notes.md)).
+
 The top_processor demo:
 
 ```bash
