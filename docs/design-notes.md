@@ -571,6 +571,74 @@ Not taken: in-SRAM and ReRAM compute-in-memory circuits (they need a tape-out), 
 dental model is INT8), changes to the FPGA's own blocks (SST, CoMeFa; they need VTR, not a board), and HISIM's
 2.5D / 3D, network-on-package and thermal models (one chip here).
 
+## Ideas taken from UT Dallas work (Schaefer, Bhatia, Ibrahim)
+
+Reviewed on 2026-11-27 for the UT Dallas SOP. Read in full: Wan, ..., Ibrahim, ..., Raychowdhury, "Towards Efficient
+Neuro-Symbolic AI: From Workload Characterization to Hardware Architecture" (IEEE TCASAI 2024, arXiv 2409.13153;
+the outlook and conclusion only as a summary). Schaefer's DARClab papers (DAC 2024 "Finding Bugs in RTL Descriptions:
+High-Level Synthesis to the Rescue", TODAES "From High-Level Synthesis Lite to High-Level Synthesis Full", TCAD 2023
+"Fast and Inexpensive HLS Design Space Exploration: Machine Learning to the Rescue", GLSVLSI 2025 multi-level
+predictive models for HLS estimates, DAC 2025 ADVISOR) and Bhatia's papers (TUFFC 2025 FPGA-accelerated CNN
+reconstruction for sparse-array ultrasound; Integration 2023 ML-based HLS design-space exploration with Schaefer;
+ISQED 2022 post-route quality-of-results prediction for HLS) are behind ACM / IEEE paywalls with no author copies, so
+they are taken from titles, abstracts and the lab pages only.
+
+1. **HLS estimates are not implementation numbers (from Schaefer's and Bhatia's HLS estimation work).** Both groups
+   predict post-synthesis or post-route results from HLS reports because the HLS estimate itself is unreliable.
+   Measured here on 2026-11-27 (`hls/hls_est_vs_vivado.py` on branch `hls4ml`, commit `0fa19f7`; table in
+   `docs/hls4ml-baseline.md` there): over 22 Vitis HLS 2020.2 projects, Vivado / HLS is 0.47 for LUT (0.35 to 0.91)
+   and 0.54 for FF; with automatic multipliers HLS underestimates DSPs by 1.33x to 2.50x on the whole layer; and for
+   the ZedBoard part the LUT order of rf 32 / 72 / 144 differs between HLS and Vivado. Here, every hls4ml point in
+   the coupling table and in the reuse-factor choice (3/27) uses synthesized numbers; HLS estimates are used at most
+   to prune a sweep before synthesis, never as results.
+2. **The HLS tool is part of what is verified (from Schaefer's work on HLS tool limits and bugs).** His group treats
+   HLS tools as something to test and work around, not trust. Here this was learned the hard way (2025.2.1 `io_stream`
+   RTL is wrong while C simulation is right, 2026-11-21). The project keeps the rule that every HLS design is checked
+   bit-exact in RTL co-simulation, and adds one task for 3/27: shrink the 2025.2.1 failure to the smallest layer and
+   reuse factor that still reproduce it, so it can be reported to hls4ml or AMD and the tool version decision has a
+   documented reason.
+3. **A small reuse-factor sweep, synthesized (from the HLS design-space exploration work).** Only rf 32, 72 and 144
+   were built for the whole layer. Before 3/27, a sweep of more reuse factors (HLS only, minutes each) picks the
+   points on the LUT / DSP / latency front, and only those are synthesized in parallel on SOC; the front, not one
+   point, goes into the comparison with the hand-written array.
+4. **A medical U-Net on an FPGA as a reference point (from Bhatia, TUFFC 2025; abstract only).** A lightweight U-Net
+   (about 222,600 parameters) reconstructs missing ultrasound channels on an FPGA in about 221 ms per frame at about
+   0.918 W (32 channels; PSNR above 18 dB, SSIM above 0.5). Here, it is a related-work row: the dental slim U-Net is
+   reported in the same units (time per image, watts, joules per image) once board numbers exist, and the
+   difference in model size and accuracy requirement is stated rather than compared as one number.
+5. **Profiling in a fixed taxonomy, with kernel counters (from Wan, ..., Ibrahim, TCASAI 2024).** The paper sorts
+   operators into six categories (convolution, MatMul, element-wise, data transformation, data movement, other),
+   places them on a roofline, and backs the memory-bound claim with Nsight Compute counters per kernel: the symbolic
+   kernels run at 2-3% compute throughput and 4-6% ALU use with 78-91% of DRAM bandwidth, against 93-95% compute
+   throughput for the neural kernels (GEMM, ReLU); host-to-device transfers are about half of the latency. Here, the dental GPU profiling
+   (memory-bound BatchNorm / ReLU at about 44% of U-Net time before fusion; inference about one fifth of the
+   pipeline) gets the same Nsight Compute counters for one convolution and one fused element-wise kernel, and the
+   host-device copy time, so the memory-bound claim rests on counters and not only on the roofline. It needs the
+   server GPU alone (dental project rule); not scheduled.
+6. **Every hardware feature traced to a measurement (from the same paper's Table V, which maps each accelerator
+   feature to a profiling recommendation).** Done on 2026-11-27 for this project (golden-model and analytical-model
+   numbers, as labeled):
+
+   | Feature | Measured reason | Where |
+   | --- | --- | --- |
+   | `dot4` (packed INT8 dot product) | convolution 3.5x fewer instructions than RV32IM | README, U-Net block benchmark |
+   | register blocking before new hardware | `block_rb` 33,325 vs `block_nn` 78,504 instructions (2.4x), no hardware | UT Austin section, item 2 |
+   | no 2:4 instruction in the core | `sdot8` at most 1.38x, needs a third read port | UT Austin section, item 2 |
+   | coprocessor core moves data, array does MACs | 6 of the 7 `dot4` inner-loop instructions are address arithmetic and loads | ASU section, item 1 |
+   | 2:4 processing elements in the coprocessor | analytical model 1.68x over dense INT8 at 12.8 GB/s (1.13x at 4 GB/s) | ASU section, item 3 |
+   | activation buffer banked 4/N wide | 1.08x for 2:4 with a dense-width buffer | ASU section, item 3 |
+   | whole layers on the ZedBoard (DDR3) | 45 MB per layer over UART is over an hour | UT Austin section, item 4 |
+   | hls4ml points from synthesis, not HLS | LUT estimate 2x high, DSP up to 2.5x low | item 1 above |
+
+   The README's coupling section gets this table when the coprocessor exists; until then it lives here.
+7. **Several pipeline stages per cycle cost power (from the same paper's SOPC / MOPC control).** Running several
+   stages per cycle was 1.8x to 2.3x faster at 44% to 57% more power. Here, the single-cycle versus two-cycle `dot4`
+   question in the pipelined core (Next steps) is answered in time per block and in energy per block, not in Fmax
+   alone.
+
+Not taken: neuro-symbolic and vector-symbolic hardware, approximate computing (the dental model is accuracy-strict),
+HLS IP protection and redaction, and the ultrasound reconstruction itself.
+
 ## Ideas taken from Merrimac and Imagine
 
 Reviewed on 2026-11-22 from the full SC'03 paper (Dally et al., "Merrimac: Supercomputing with Streams") and from
@@ -1081,6 +1149,9 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
 - During the one-layer board run (12/9 to 12/16): after `decoders.3.block.3`, measure the held-out layer
   `decoders.3.block.0` (weights exported, golden model passes; item 4 of the ASU section) and report the cost
   model's error on it.
+- Before the 3/27 hls4ml comparison: shrink the Vitis HLS 2025.2.1 `io_stream` failure to the smallest layer and
+  reuse factor that reproduce it, and sweep more reuse factors in HLS, synthesizing only the points on the LUT / DSP
+  / latency front (items 2 and 3 of the UT Dallas section).
 - Golden model of the sparse dot-product instruction in both forms (item 2 of the UT Austin section), compared with
   `dot4` on `head.0.block.3` with the dental 2:4 mask. It needs no RTL and can be done at any time.
 - Cycle counts, LUT / FF / DSP and Fmax on the FPGA (Nexys A7; Basys3 as a build-only column) with and without
