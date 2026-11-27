@@ -182,6 +182,27 @@ repeated.
   514 x 32 bytes, roughly 9 more 36 Kb block RAMs, not in these numbers).
 - Out-of-context synthesis, no I/O and no AXI wrapper, as above.
 
+### HLS resource estimates against Vivado synthesis (2026-11-27)
+
+`hls/hls_est_vs_vivado.py` (read-only) compares the Vitis HLS 2020.2 estimate (the top function's
+`*_csynth.rpt` "Total") with the Vivado out-of-context synthesis above (`vsynth_util.rpt`) for all 22 SOC
+projects (`python3 hls/hls_est_vs_vivado.py ~/hls4ml_block/hls4ml ~/hls4ml_block/hls4ml_fit ~/hls4ml_block/hls4ml_full`).
+Ratios are Vivado / HLS:
+
+| Resource | Median | Range | Note |
+| --- | ---: | ---: | --- |
+| LUT | 0.47 | 0.35 - 0.91 | HLS overestimates about 2x (rf 144 on the Basys3: 76,528 estimated, 29,146 synthesized) |
+| FF | 0.54 | 0.44 - 0.65 | |
+| DSP, automatic | | 0.52 - 2.50 | whole layer: 1.33 - 2.50, HLS underestimates (rf 72: 66 estimated, 152 synthesized) |
+| DSP, forced (`--mul dsp`) | | 0.75 - 1.25 | rf 32 estimate 294 exceeds the part; Vivado stops at 240 / 220 |
+| BRAM (18K) | | 0.09 - 0.72 | |
+
+In three of the four whole-layer groups the LUT order of rf 32 / 72 / 144 is the same in HLS and Vivado; for the
+ZedBoard part with automatic multipliers it is not (rf 72 synthesizes to 7,171 LUT, rf 144 to 7,392, while HLS
+puts rf 144 lower). So the reuse factor is chosen from synthesized numbers, never from HLS estimates alone, and a
+single correction factor would not be reliable (the LUT ratio spans 0.35 to 0.91). This is the problem the UT Dallas
+work on HLS estimation addresses (docs/design-notes.md on main, "Ideas taken from UT Dallas work", item 1).
+
 ## Notes on the tools
 
 - The local Vivado / Vitis 2025.2.1 has no Zynq-7000 device support installed (`Part 'xc7z020clg484-1' is not
