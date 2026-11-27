@@ -471,6 +471,80 @@ Not taken: Versal AI Engines and Stratix 10 NX tensor blocks (FCCM 2024), the su
 (ELSA; a per-layer sensitivity scan is enough for one model), modified BRAMs (CoMeFa), the 1:3 level (SST), and
 Linux kernel drivers and device trees (Lecture 10; bare metal first).
 
+## Ideas taken from ASU work (SAFER, PIM vs FPGA, HISIM, CoMeFa, FPGA-for-DL survey)
+
+Reviewed on 2026-11-27. Read in full: SAFER (Sridharan, ..., Jeff Zhang, Seo, Fan, ESSERC 2025; NSF PAR author
+copy, figures and tables not extracted), the PIM-vs-FPGA study (Kochar, Ekiert, Najafi, Fan, Angizi, GLSVLSI 2023;
+NSF PAR) and SST (arXiv 2502.03763). Read in part: CoMeFa (architecture and results), HISIM (Wang, ..., Jeff Zhang,
+Chakrabarti, Ogras, Cao, IEEE TCAD 2025; NSF PAR author copy, validation and design-space sections) and the
+FPGA-for-DL survey (Boutros, Arora, Betz, arXiv 2404.10076 v1, passages on sparsity, bandwidth and inference styles
+only). Items already taken from SST and CoMeFa are in the UT Austin section and are not repeated.
+
+1. **The core moves data, the array does the MACs (from SAFER).** SAFER is four in-SRAM sparse MAC cores (28 nm,
+   0.95 mm^2) next to a custom 32-bit single-cycle RV32IM core. The core does no MACs: extra load / store
+   instructions compute addresses and unicast or multicast weights, inputs and outputs between the input buffers
+   (0.5 KB per core), the two 1 KB output buffers and the CIM arrays; global status registers report each core's
+   state; FP8 and INT32 vector additions in the core sum the partial results of matrices larger than one array. Each
+   compute column also has a backup SRAM (64 weights) so the next weights load while the current ones compute.
+   Here, this is the division of work for coupling point 2: six of the seven `dot4` inner-loop instructions are
+   address arithmetic and loads, so the core's new instructions should move data into the coprocessor's buffers
+   (one word, or one word to several PE rows) and add INT32 partial sums when the reduction is split across tiles,
+   with status polled from a register, while the array does the MACs. It is measured against `dot4` and
+   `block_rb` on the same block, in instructions issued by the core and in cycles. The backup weight buffer is the
+   double buffering already planned (item 8 of the UT Austin section).
+2. **Sparsity for capacity, measured on silicon (from SAFER).** SAFER stores only the non-zero weights and one
+   index each (index width set by the largest M supported) and streams all M inputs for every row regardless of N,
+   so the cycle count is normalized to M: N:M saves storage, not time. With 1:16, ResNet-18 (CIFAR-100, about 11 M
+   parameters) needs 91 macros, 15.5x fewer, and the paper's figure of merit is TOPS/W/mm^2 x weights per byte.
+   Here, this is measured support for item 3 of the ReaLLM / Chiplet Cloud section. The coupling table gets a
+   weight-footprint column with the indices counted (INT8 2:4 is 0.625 of dense, 1:4 is 0.3125), and the final
+   metric may include it, since on the Nexys A7 the weights of a layer compete with activations for BRAM.
+3. **Activation bandwidth sets the 2:4 ceiling (from SST, detail not in the UT Austin section).** In 2:4 mode each
+   SST processing element loads four activations at once and keeps them for two cycles, so it reads activations at
+   twice the dense rate; the sparse modes need four activation banks instead of one, and a sparse weight bank is 40
+   bits wide instead of 32 (data plus indices). The paper's measurement of AMD Versal AIE-ML, which supports 2:4 in
+   hardware, shows what happens without that bandwidth: utilization falls from over 90% (dense) to 51.6% at 2:4,
+   and a 64^3 INT8 GEMM gets only 13% faster (4.5% in bf16), which the authors attribute to vector load / store
+   bandwidth. Here: (a) check that the dental analytical model (`accel_deploy.py`) and the Sparseloop
+   architecture used in the cross-check charge 2:4 for the doubled on-chip activation reads, not only the DRAM
+   traffic; (b) the coprocessor's activation buffer is banked for M/N times the dense read rate; (c) the AIE-ML
+   result is outside evidence that the missing CPU speedup is a bandwidth effect, and the README can cite it.
+4. **Calibrate on one layer, report the error on others (from HISIM).** HISIM calibrates one constant (the
+   latency of the crossbars mapped to VGG16's first layer) to measured data and then predicts the first seven
+   layers of VGG16 and MobileNet within 5.3%; its systolic-array model is calibrated with Scale-Sim and 28 nm
+   synthesis, its network model with BookSim, with a plot of model error against evaluation speed; it evaluates
+   672 configurations in 48.8 s, 10^4 to 10^6 times faster than the simulators it replaces. Its authors plan a CPU
+   model calibrated on RISC-V silicon. Here, the one-layer board run calibrates the per-layer cost model on
+   `decoders.3.block.3` and checks it on a second layer of a different shape that is measured but not used for
+   fitting, reporting that held-out error; the Timeloop cross-check table gets a column for model run time.
+5. **One measurement boundary for every point (from the PIM-vs-FPGA study, as a warning).** The study compares a
+   65 nm 16 kb processing-in-SRAM macro (power estimated for the macro), a PYNQ-Z2 running FINN (XC7Z020, the
+   ZedBoard's device; power from a USB meter on the whole board, unused parts included) and an RTX A2000 (power
+   halved, then scaled by weight x input bits), and reports 64-160x speedup and up to 228x img/s/W for PIM over the
+   FPGA. The three are measured inside different boundaries, so the ratios mix architecture with accounting. Here,
+   the coupling points use one boundary: the same layer and INT8 weights, cycles from the same counters, power from
+   the same source (Vivado power report or one on-board measurement, stated as core-only or whole-board), and any
+   estimated number is marked. FINN's numbers on the XC7Z020 are context only (1- and 2-bit networks, CIFAR-10).
+6. **Split the MACs between unit types (from CoMeFa).** CoMeFa partitions GEMV and FIR between DSPs and in-BRAM
+   compute: speedup rises with the share given to the BRAMs up to a point, after which loading, unloading and
+   bit-serial latency dominate, and the best split differs per application. The DRAM-bound benchmark gains nothing.
+   Bit-serial multiplication takes n^2 + 3n - 2 cycles (86 for INT8), so the peak MAC gain falls from 2x at INT4 to
+   1.7x at INT8. Here, hls4ml at reuse factor 32 uses all 240 DSPs of the Nexys A7, so the hand-written array maps
+   part of its multipliers to LUTs and sweeps the DSP / LUT split for LUTs, Fmax and cycles. Bit-serial compute is
+   revisited only for INT4 (W4A8 passed in the dental project).
+7. **Name the coupling points by inference style (from the survey).** The survey separates spatial, layer-pipelined
+   generators (HPIPE, fpgaConvNet, DNNBuilder, FINN), which build one module per layer, from temporal overlays, a PE
+   array driven by instructions, which compile a new model in seconds instead of a bitstream in hours. HPIPE skips
+   unstructured zero weights with a soft-logic gather network mapped onto the Stratix 10 NX tensor block's vector
+   mode (1.9x over DSPs). The survey names data movement from BRAM to compute (routing, congestion, power), not
+   BRAM bandwidth itself, as the bottleneck on the fabric. Here, the README's coupling table labels hls4ml
+   `io_stream` as spatial and the core plus array as a temporal overlay, which explains why the spatial point
+   covers one layer per bitstream and the overlay can run the whole U-Net.
+
+Not taken: in-SRAM and ReRAM compute-in-memory circuits (they need a tape-out), the FP8 fused dot product (the
+dental model is INT8), changes to the FPGA's own blocks (SST, CoMeFa; they need VTR, not a board), and HISIM's
+2.5D / 3D, network-on-package and thermal models (one chip here).
+
 ## Ideas taken from Merrimac and Imagine
 
 Reviewed on 2026-11-22 from the full SC'03 paper (Dally et al., "Merrimac: Supercomputing with Streams") and from
@@ -978,6 +1052,9 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
 
 - Before the one-layer board run (12/9 to 12/16): a script that picks the tile sizes for the 32 KiB data memory
   with MAFAT's memory predictor (item 4 of the UT Austin section), so the board run does not search by trial.
+- Before the one-layer board run (12/9 to 12/16): check that the analytical model and the Sparseloop
+  architecture charge 2:4 for the doubled on-chip activation reads (item 3 of the ASU section), and choose the
+  held-out second layer for checking the calibrated cost model (item 4 there).
 - Golden model of the sparse dot-product instruction in both forms (item 2 of the UT Austin section), compared with
   `dot4` on `head.0.block.3` with the dental 2:4 mask. It needs no RTL and can be done at any time.
 - Cycle counts, LUT / FF / DSP and Fmax on the FPGA (Nexys A7; Basys3 as a build-only column) with and without
