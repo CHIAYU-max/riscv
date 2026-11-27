@@ -509,6 +509,16 @@ only). Items already taken from SST and CoMeFa are in the UT Austin section and 
    architecture used in the cross-check charge 2:4 for the doubled on-chip activation reads, not only the DRAM
    traffic; (b) the coprocessor's activation buffer is banked for M/N times the dense read rate; (c) the AIE-ML
    result is outside evidence that the missing CPU speedup is a bandwidth effect, and the README can cite it.
+
+   Done on 2026-11-27 for (a) (dental `accel_onchip_bw.py`, commit `b897bdb`, prediction written first): the
+   model charged the 4/N activation reads in energy only, and per-tile cycles assumed the global buffer delivers
+   them at any rate; the Sparseloop GlobalBuffer had no bandwidth either, so the matching 2:4 cycle ratio (0.500)
+   did not test it. With a read limit of B bytes per cycle (as a multiple of the dense need), the deployed model
+   (64 x 64, 1 MB, 12.8 GB/s, per ROI) gives: dense INT8 45.3 ms at every B; INT8 2:4 42.1 / 26.9 / 26.9 / 26.9 ms
+   at B = 1x / 2x / 4x / unlimited (1.08x over dense at 1x, 1.68x from 2x on); INT8 1:4 45.9 / 25.8 / 19.2 / 19.2 ms.
+   The prediction that 2:4 gains at most 5% at 1x failed narrowly (1.08x; the extra 3% is the array fill saved by
+   half as many tiles and the smaller weight traffic). So the coprocessor's activation buffer needs 4/N times the
+   dense read width (two banks for 2:4, four for 1:4), as SST builds it; at 4 GB/s DRAM still dominates.
 4. **Calibrate on one layer, report the error on others (from HISIM).** HISIM calibrates one constant (the
    latency of the crossbars mapped to VGG16's first layer) to measured data and then predicts the first seven
    layers of VGG16 and MobileNet within 5.3%; its systolic-array model is calibrated with Scale-Sim and 28 nm
@@ -517,6 +527,22 @@ only). Items already taken from SST and CoMeFa are in the UT Austin section and 
    model calibrated on RISC-V silicon. Here, the one-layer board run calibrates the per-layer cost model on
    `decoders.3.block.3` and checks it on a second layer of a different shape that is measured but not used for
    fitting, reporting that held-out error; the Timeloop cross-check table gets a column for model run time.
+
+   Chosen on 2026-11-27: the held-out layer is `decoders.3.block.0` (96 -> 32 channels, 256 x 256, 1.81 G MACs, the
+   deployed U-Net's largest layer): same output size as `decoders.3.block.3`, three times the reduction length, so it
+   tests how the model scales with CIN. On the Nexys A7 (32 KiB) the tile that moves least data is 8 x 8 x 16 (2,048
+   tiles, 48.8 MB, 1.56 G golden-model instructions); with all 32 output channels only 2 x 2 x 32 fits. A golden-model
+   preview of the check (criterion set first: within 10% on every shape): the instruction fit calibrated at CIN 32
+   (`build/tile_plan_cal.json`), scaled by CIN, predicts the six CIN 96 calibration shapes 4.4% to 5.8% high, so it
+   passes, but the bias is systematic: part of the cost per output does not grow with CIN (loop overhead per 3 x 3
+   position). Fitted on both, instructions per output = 15.2 + 7.62 x CIN, and the board model takes that form. The
+   CIN 96 fit is kept in `build/tile_plan_cal_cin96.json`; `build/tile_plan_cal.json` stays at CIN 32 for the
+   December run. Its fold-0 weights were exported the same day (`sw/export_layer.py --conv decoders.3.block.0 --bn
+   decoders.3.block.1`, `build/unet/slim_d3b0_fold0_c{8,16,32}.json`, not in git; re-exporting `decoders.3.block.3`
+   gave a file identical to the existing one, so it is the same checkpoint). On the 8 x 8 x 16 tile with these
+   weights `block_mul`, `block_dot4`, `block_nn` and `block_rb` pass on the golden model; `block_rb` runs 760,797
+   instructions, against 762,137 predicted by the CIN 96 fit (+0.2%) and +4.6% by the CIN 32 fit scaled by CIN.
+   `block_ref` did not finish within 80 M instructions (it spends them in `__mulsi3`) and was not run further.
 5. **One measurement boundary for every point (from the PIM-vs-FPGA study, as a warning).** The study compares a
    65 nm 16 kb processing-in-SRAM macro (power estimated for the macro), a PYNQ-Z2 running FINN (XC7Z020, the
    ZedBoard's device; power from a USB meter on the whole board, unused parts included) and an RTX A2000 (power
@@ -1052,9 +1078,9 @@ assertions). Not used: the network-on-chip, cache, DRAM controller, links and pr
 
 - Before the one-layer board run (12/9 to 12/16): a script that picks the tile sizes for the 32 KiB data memory
   with MAFAT's memory predictor (item 4 of the UT Austin section), so the board run does not search by trial.
-- Before the one-layer board run (12/9 to 12/16): check that the analytical model and the Sparseloop
-  architecture charge 2:4 for the doubled on-chip activation reads (item 3 of the ASU section), and choose the
-  held-out second layer for checking the calibrated cost model (item 4 there).
+- During the one-layer board run (12/9 to 12/16): after `decoders.3.block.3`, measure the held-out layer
+  `decoders.3.block.0` (weights exported, golden model passes; item 4 of the ASU section) and report the cost
+  model's error on it.
 - Golden model of the sparse dot-product instruction in both forms (item 2 of the UT Austin section), compared with
   `dot4` on `head.0.block.3` with the dental 2:4 mask. It needs no RTL and can be done at any time.
 - Cycle counts, LUT / FF / DSP and Fmax on the FPGA (Nexys A7; Basys3 as a build-only column) with and without
